@@ -1,9 +1,10 @@
+import 'package:PiliPlus/common/widgets/scaffold/simple_scaffold.dart';
 import 'package:PiliPlus/services/watch_together/watch_together_service.dart';
 import 'package:PiliPlus/services/watch_together/wt_models.dart';
-import 'package:flutter/material.dart';
 import 'package:flutter/services.dart';
 import 'package:flutter_smart_dialog/flutter_smart_dialog.dart';
 import 'package:get/get.dart';
+import 'package:material_ui/material_ui.dart';
 
 class WatchTogetherPage extends StatefulWidget {
   const WatchTogetherPage({super.key});
@@ -46,20 +47,24 @@ class _WatchTogetherPageState extends State<WatchTogetherPage> {
     if (mounted) setState(() => _busy = false);
   }
 
+  Future<void> _leave() async {
+    await service.leave();
+    if (mounted) setState(() {});
+  }
+
   @override
   Widget build(BuildContext context) {
-    final theme = Theme.of(context);
-    return Scaffold(
+    return SimpleScaffold(
       appBar: AppBar(title: const Text('一起看')),
       body: Obx(
         () => service.inRoom.value
-            ? _buildRoomView(context, theme)
-            : _buildLobbyView(theme),
+            ? _buildRoomView(Theme.of(context))
+            : _buildLobbyView(),
       ),
     );
   }
 
-  Widget _buildLobbyView(ThemeData theme) {
+  Widget _buildLobbyView() {
     return ListView(
       padding: const EdgeInsets.all(16),
       children: [
@@ -107,7 +112,7 @@ class _WatchTogetherPageState extends State<WatchTogetherPage> {
     );
   }
 
-  Widget _buildRoomView(BuildContext context, ThemeData theme) {
+  Widget _buildRoomView(ThemeData theme) {
     final room = service.room.value;
     final role = service.role.value;
     return ListView(
@@ -121,10 +126,7 @@ class _WatchTogetherPageState extends State<WatchTogetherPage> {
               children: [
                 Row(
                   children: [
-                    Text(
-                      '房间号',
-                      style: theme.textTheme.bodyMedium,
-                    ),
+                    const Text('房间号'),
                     const SizedBox(width: 12),
                     SelectableText(
                       room?.name ?? '-',
@@ -135,9 +137,7 @@ class _WatchTogetherPageState extends State<WatchTogetherPage> {
                     ),
                     IconButton(
                       onPressed: () {
-                        Clipboard.setData(
-                          ClipboardData(text: room?.name ?? ''),
-                        );
+                        Clipboard.setData(ClipboardData(text: room?.name ?? ''));
                         SmartDialog.showToast('已复制房间号');
                       },
                       icon: const Icon(Icons.copy, size: 18),
@@ -170,7 +170,11 @@ class _WatchTogetherPageState extends State<WatchTogetherPage> {
                   (room?.waitForLoadding ?? false) ? '是' : '否',
                 ),
                 if (room?.playback.target != null)
-                  _statRow(theme, '当前视频', room!.playback.target!.describe()),
+                  _statRow(
+                    theme,
+                    '当前视频',
+                    room!.playback.target!.describe(),
+                  ),
               ],
             ),
           ),
@@ -178,16 +182,13 @@ class _WatchTogetherPageState extends State<WatchTogetherPage> {
         const SizedBox(height: 12),
         if (role.isHost)
           OutlinedButton.icon(
-            onPressed: service.navigateToCurrent,
+            onPressed: () => service.navigateToCurrent(),
             icon: const Icon(Icons.sync),
             label: const Text('邀请对方看当前视频'),
           ),
         const SizedBox(height: 24),
         FilledButton.tonal(
-          onPressed: () async {
-            await service.leave();
-            if (mounted) setState(() {});
-          },
+          onPressed: _busy ? null : _leave,
           child: const Text('退出房间'),
         ),
       ],
