@@ -200,6 +200,11 @@ class _SettingPageState extends State<SettingPage> {
               ),
             ),
         ListTile(
+          onTap: () => Get.toNamed('/watchTogether'),
+          leading: const Icon(Icons.group_outlined),
+          title: Text('一起看', style: titleStyle),
+        ),
+        ListTile(
           onTap: () => LoginPageController.switchAccountDialog(context),
           leading: const Icon(Icons.switch_account_outlined),
           title: Text('切换账号', style: titleStyle),
