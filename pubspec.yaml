@@ -105,6 +105,7 @@ dependencies:
     git:
       url: https://github.com/bggRGjQaUbCoE/flutter_smart_dialog.git
       ref: main
+  flutter_webrtc: ^1.6.1
   markdown: ^7.3.1
   flutter_markdown_plus: ^1.0.7
   flutter_markdown_plus_latex: ^1.0.5

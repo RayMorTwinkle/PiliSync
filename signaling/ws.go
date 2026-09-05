@@ -332,22 +332,25 @@ func (h *Hub) handleNavigate(c *Client, msg *Incoming) {
 }
 
 func (h *Hub) handleWebRTC(c *Client, msg *Incoming) {
-	if msg.To == "" {
+	payload := map[string]any{
+		"type":   "webrtc",
+		"from":   c.tempUser,
+		"payload": msg.Payload,
+	}
+	if msg.To != "" {
+		h.mu.Lock()
+		defer h.mu.Unlock()
+		for peer := range h.clients {
+			if peer.roomName == c.roomName && peer.tempUser == msg.To {
+				peer.sendJSON(payload)
+				return
+			}
+		}
+		c.sendJSON(map[string]any{"type": "error", "code": "peer_not_found", "to": msg.To})
 		return
 	}
-	h.mu.Lock()
-	defer h.mu.Unlock()
-	for peer := range h.clients {
-		if peer.roomName == c.roomName && peer.tempUser == msg.To {
-			peer.sendJSON(map[string]any{
-				"type":   "webrtc",
-				"from":   c.tempUser,
-				"payload": msg.Payload,
-			})
-			return
-		}
-	}
-	c.sendJSON(map[string]any{"type": "error", "code": "peer_not_found", "to": msg.To})
+	// empty `to`: relay to everyone else in the room (2-person MVP)
+	h.broadcast(c.roomName, payload, c)
 }
 
 func (h *Hub) handleChat(c *Client, msg *Incoming) {

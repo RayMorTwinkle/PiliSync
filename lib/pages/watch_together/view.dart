@@ -1,5 +1,6 @@
 import 'package:PiliPlus/common/widgets/scaffold/simple_scaffold.dart';
 import 'package:PiliPlus/services/watch_together/watch_together_service.dart';
+import 'package:PiliPlus/services/watch_together/wt_call_manager.dart';
 import 'package:PiliPlus/services/watch_together/wt_models.dart';
 import 'package:flutter/services.dart';
 import 'package:flutter_smart_dialog/flutter_smart_dialog.dart';
@@ -186,6 +187,8 @@ class _WatchTogetherPageState extends State<WatchTogetherPage> {
             icon: const Icon(Icons.sync),
             label: const Text('邀请对方看当前视频'),
           ),
+        const SizedBox(height: 12),
+        _voiceButton(),
         const SizedBox(height: 24),
         FilledButton.tonal(
           onPressed: _busy ? null : _leave,
@@ -193,6 +196,55 @@ class _WatchTogetherPageState extends State<WatchTogetherPage> {
         ),
       ],
     );
+  }
+
+  Widget _voiceButton() {
+    final call = service.call;
+    return Obx(() {
+      final callState = call.state;
+      return Column(
+        children: [
+          if (callState == WtCallState.idle)
+            OutlinedButton.icon(
+              onPressed: service.inRoom.value ? () => call.start('') : null,
+              icon: const Icon(Icons.mic),
+              label: const Text('开启语音通话'),
+            )
+          else ...[
+            Text(
+              switch (callState) {
+                WtCallState.calling => '通话中…',
+                WtCallState.connected => '已接通',
+                WtCallState.failed => '通话失败',
+                WtCallState.idle => '',
+              },
+            ),
+            const SizedBox(height: 8),
+            Row(
+              mainAxisAlignment: MainAxisAlignment.center,
+              children: [
+                IconButton.filledTonal(
+                  onPressed: call.toggleMic,
+                  icon: Icon(call.micMuted ? Icons.mic_off : Icons.mic),
+                ),
+                const SizedBox(width: 12),
+                IconButton.filledTonal(
+                  onPressed: call.toggleSpeaker,
+                  icon: Icon(
+                    call.speakerOn ? Icons.volume_up : Icons.volume_down,
+                  ),
+                ),
+                const SizedBox(width: 12),
+                IconButton.filledTonal(
+                  onPressed: call.hangUp,
+                  icon: const Icon(Icons.call_end),
+                ),
+              ],
+            ),
+          ],
+        ],
+      );
+    });
   }
 
   Widget _statRow(ThemeData theme, String label, String value) {
