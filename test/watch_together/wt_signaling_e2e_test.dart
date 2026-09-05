@@ -29,7 +29,9 @@ void main() {
       room: 'e2e1',
       user: 'h1',
       pass: '',
-      isHost: true,
+    );
+    host.updatePlayback(
+      WtPlaybackState(lastUpdateClientTime: host.timeSync.now()),
     );
     await member.connect(serverBase: '127.0.0.1:9901', room: 'e2e1', user: 'm1', pass: '');
 

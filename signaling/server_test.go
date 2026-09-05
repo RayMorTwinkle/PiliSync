@@ -11,9 +11,8 @@ import (
 )
 
 func startTestServer(t *testing.T) *httptest.Server {
-	rooms := NewRoomStore()
+	rooms := NewRoomStore(nil)
 	hub := NewHub(rooms)
-	go hub.run()
 	mux := setupMux(rooms, hub)
 	return httptest.NewServer(mux)
 }
