@@ -7,6 +7,7 @@ import 'package:PiliPlus/pages/blacklist/view.dart';
 import 'package:PiliPlus/pages/bubble/view.dart';
 import 'package:PiliPlus/pages/danmaku_block/view.dart';
 import 'package:PiliPlus/pages/dlna/view.dart';
+import 'package:PiliPlus/pages/watch_together/view.dart';
 import 'package:PiliPlus/pages/download/view.dart';
 import 'package:PiliPlus/pages/dynamics/view.dart';
 import 'package:PiliPlus/pages/dynamics_create_vote/view.dart';
@@ -178,6 +179,7 @@ class Routes {
     GetPage(name: '/sameFollowing', page: () => const FollowSamePage()),
     GetPage(name: '/download', page: () => const DownloadPage()),
     GetPage(name: '/dlna', page: () => const DLNAPage()),
+    GetPage(name: '/watchTogether', page: () => const WatchTogetherPage()),
     GetPage(name: '/myReply', page: () => const MyReply()),
     GetPage(name: '/videoWeb', page: () => const MemberVideoWeb()),
     GetPage(name: '/ssWeb', page: () => const MemberSSWeb()),
