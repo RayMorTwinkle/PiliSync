@@ -154,8 +154,16 @@ class WatchTogetherService {
   }
 
   WtPlaybackState? _buildPlaybackState() {
-    if (!player.hasPlayer) return null;
     final target = _currentTarget;
+    if (!player.hasPlayer) {
+      return WtPlaybackState(
+        paused: true,
+        lastUpdateClientTime: client.timeSync.now(),
+        url: target?.bvid,
+        videoTitle: target?.title,
+        target: target,
+      );
+    }
     return WtPlaybackState(
       playbackRate: player.speed,
       currentTime: player.positionMs / 1000,
