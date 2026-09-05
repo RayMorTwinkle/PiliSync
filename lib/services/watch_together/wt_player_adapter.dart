@@ -11,6 +11,7 @@ abstract interface class WtPlayerAdapter {
   double get durationMs;
   double get speed;
   bool get isLive;
+  Object? get identity;
 
   Future<void> play();
   Future<void> pause();
@@ -33,16 +34,19 @@ class PlPlayerAdapter implements WtPlayerAdapter {
   bool get isBuffering => _p?.isBuffering.value ?? false;
 
   @override
-  double get positionMs => (_p?.position.value ?? 0).toDouble();
+  double get positionMs => (_p?.position.value ?? 0) * 1000;
 
   @override
-  double get durationMs => (_p?.duration.value ?? 0).toDouble();
+  double get durationMs => (_p?.duration.value ?? 0) * 1000;
 
   @override
   double get speed => _p?.playbackSpeed ?? 1.0;
 
   @override
   bool get isLive => _p?.isLive ?? false;
+
+  @override
+  Object? get identity => _p;
 
   @override
   Future<void> play() async => _p?.play();

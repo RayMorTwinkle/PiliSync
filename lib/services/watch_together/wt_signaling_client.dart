@@ -15,6 +15,7 @@ class WtSignalingClient {
 
   WebSocket? _socket;
   Timer? _reconnectTimer;
+  Timer? _tsyncTimer;
   int _reconnectAttempt = 0;
   bool _disposed = false;
 
@@ -36,44 +37,58 @@ class WtSignalingClient {
     _connectionState.add(s);
   }
 
-  bool _isHost = false;
-
   Future<void> connect({
     required String serverBase,
     required String room,
     required String user,
     required String pass,
-    bool isHost = false,
   }) async {
-    this.serverBase = serverBase;
+    this.serverBase = _normalizeBase(serverBase);
     roomName = room;
     tempUser = user;
     password = pass;
-    _isHost = isHost;
     _disposed = false;
     _reconnectAttempt = 0;
-    await _doConnect();
+    await _openSocket();
   }
 
-  Future<void> _doConnect() async {
-    if (_disposed || state == WtConnectionState.connected) return;
+  static String _normalizeBase(String input) {
+    var s = input.trim();
+    for (final scheme in ['https://', 'http://', 'wss://', 'ws://']) {
+      if (s.toLowerCase().startsWith(scheme)) {
+        s = s.substring(scheme.length);
+      }
+    }
+    while (s.endsWith('/')) {
+      s = s.substring(0, s.length - 1);
+    }
+    return s;
+  }
+
+  Future<void> _openSocket() async {
+    if (_disposed) return;
     _setState(WtConnectionState.connecting);
+    WebSocket socket;
     try {
-      final socket = await WebSocket.connect(
+      socket = await WebSocket.connect(
         'ws://$serverBase/ws',
       ).timeout(const Duration(seconds: 8));
-      socket.pingInterval = const Duration(seconds: 30);
-      _socket = socket;
-      _setState(WtConnectionState.connected);
-      _reconnectAttempt = 0;
-      _listen(socket);
-      await sampleServerTime();
-      _sendJoin();
-      _startTimeSync();
-    } catch (_) {
+    } catch (e) {
       _setState(WtConnectionState.disconnected);
-      _scheduleReconnect();
+      rethrow;
     }
+    if (_disposed) {
+      await socket.close();
+      return;
+    }
+    socket.pingInterval = const Duration(seconds: 30);
+    _socket = socket;
+    _setState(WtConnectionState.connected);
+    _reconnectAttempt = 0;
+    _listen(socket);
+    unawaited(sampleServerTime());
+    _sendJoin();
+    _startTimeSync();
   }
 
   void _listen(WebSocket socket) {
@@ -107,18 +122,12 @@ class WtSignalingClient {
     _reconnectAttempt++;
     _reconnectTimer = Timer(delay, () {
       _reconnectTimer = null;
-      _doConnect();
+      _openSocket().catchError((_) => _handleDisconnect());
     });
   }
 
   void _sendJoin() {
     if (roomName == null || tempUser == null) return;
-    if (_isHost) {
-      updatePlayback(
-        WtPlaybackState(lastUpdateClientTime: timeSync.now()),
-      );
-      return;
-    }
     _sendRaw({
       'type': 'join',
       'room': roomName,
@@ -131,6 +140,13 @@ class WtSignalingClient {
     switch (msg['type'] as String?) {
       case 'ping':
         _sendRaw({'type': 'pong', 't': timeSync.localNow()});
+      case 'tsync_ack':
+        final t = (msg['t'] as num?)?.toDouble() ?? 0;
+        timeSync.updateIfNeeded(
+          (msg['server'] as num?)?.toDouble() ?? 0,
+          t,
+          timeSync.localNow(),
+        );
       case 'joined':
         final room = WtRoomSnapshot.fromJson(
           msg['room'] as Map<String, dynamic>,
@@ -204,22 +220,10 @@ class WtSignalingClient {
             (msg['ts'] as num?)?.toDouble() ?? 0,
           ),
         );
+      case 'room_closed':
+        _events.add(const WtErrorEvent('room_closed'));
       case 'error':
         _events.add(WtErrorEvent(msg['code'] as String? ?? 'unknown'));
-      case 'tsync_ack':
-        final t = (msg['t'] as num?)?.toDouble() ?? 0;
-        timeSync.updateIfNeeded(
-          (msg['server'] as num?)?.toDouble() ?? 0,
-          t,
-          timeSync.localNow(),
-        );
-    }
-  }
-
-  Future<void> _startTimeSync() async {
-    for (var i = 0; i < 3; i++) {
-      _sendRaw({'type': 'tsync', 't': timeSync.localNow()});
-      await Future<void>.delayed(const Duration(milliseconds: 100));
     }
   }
 
@@ -280,6 +284,17 @@ class WtSignalingClient {
     });
   }
 
+  Future<void> _startTimeSync() async {
+    _tsyncTimer?.cancel();
+    for (var i = 0; i < 3; i++) {
+      _sendRaw({'type': 'tsync', 't': timeSync.localNow()});
+      await Future<void>.delayed(const Duration(milliseconds: 100));
+    }
+    _tsyncTimer = Timer.periodic(const Duration(seconds: 60), (_) {
+      _sendRaw({'type': 'tsync', 't': timeSync.localNow()});
+    });
+  }
+
   Future<void> sampleServerTime() async {
     try {
       final start = timeSync.localNow();
@@ -298,6 +313,8 @@ class WtSignalingClient {
     _disposed = true;
     _reconnectTimer?.cancel();
     _reconnectTimer = null;
+    _tsyncTimer?.cancel();
+    _tsyncTimer = null;
     await _socketSub?.cancel();
     _socketSub = null;
     await _socket?.close();

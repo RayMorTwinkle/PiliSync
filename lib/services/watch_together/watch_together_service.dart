@@ -29,7 +29,9 @@ class WatchTogetherService {
 
   StreamSubscription<WtEvent>? _eventSub;
   StreamSubscription<void>? _statusSub;
+  Object? _statusIdentity;
   Timer? _loop;
+  bool _ticking = false;
   WtTarget? _currentTarget;
   bool _resumeAfterLoading = false;
   bool _lastReportedLoading = false;
@@ -77,7 +79,6 @@ class WatchTogetherService {
         room: room,
         user: myTempUser.value,
         pass: pass,
-        isHost: newRole.isHost,
       );
     } catch (_) {
       SmartDialog.showToast('连接服务器失败');
@@ -87,15 +88,30 @@ class WatchTogetherService {
     inRoom.value = true;
     _listen();
     _startLoop();
+    if (newRole.isHost) {
+      client.updatePlayback(
+        WtPlaybackState(lastUpdateClientTime: client.timeSync.now()),
+      );
+    }
   }
 
   void _listen() {
     _eventSub = client.events.listen(_handleEvent);
-    _statusSub = player.onStatusChanged((playing) {
-      if (role.value.isHost) {
-        _hostUpdate(immediate: true);
-      }
-    });
+    _ensureStatusSub();
+  }
+
+  void _ensureStatusSub() {
+    if (_statusIdentity == player.identity) return;
+    unawaited(_statusSub?.cancel());
+    _statusSub = null;
+    _statusIdentity = player.identity;
+    if (player.identity != null) {
+      _statusSub = player.onStatusChanged((playing) {
+        if (role.value.isHost) {
+          _hostUpdate();
+        }
+      });
+    }
   }
 
   void _startLoop() {
@@ -107,10 +123,17 @@ class WatchTogetherService {
   }
 
   Future<void> _tick() async {
-    if (role.value.isHost) {
-      _hostTick();
-    } else if (role.value.isMember) {
-      await _memberTick();
+    if (_ticking) return;
+    _ticking = true;
+    try {
+      if (role.value.isHost) {
+        _ensureStatusSub();
+        _hostTick();
+      } else if (role.value.isMember) {
+        await _memberTick();
+      }
+    } finally {
+      _ticking = false;
     }
   }
 
@@ -123,7 +146,7 @@ class WatchTogetherService {
     _hostUpdate();
   }
 
-  void _hostUpdate({bool immediate = false}) {
+  void _hostUpdate() {
     if (!role.value.isHost || !inRoom.value) return;
     final state = _buildPlaybackState();
     if (state == null) return;
@@ -171,7 +194,10 @@ class WatchTogetherService {
 
   bool _isDifferentTarget(WtTarget a, WtTarget? b) {
     if (b == null) return true;
-    return a.type != b.type || a.bvid != b.bvid || a.roomId != b.roomId ||
+    return a.type != b.type ||
+        a.bvid != b.bvid ||
+        a.cid != b.cid ||
+        a.roomId != b.roomId ||
         a.epid != b.epid;
   }
 
@@ -222,16 +248,22 @@ class WatchTogetherService {
       case WtJoinedEvent():
         room.value = event.room;
         SmartDialog.showToast(event.isHost ? '房间已创建' : '已加入房间');
+        if (role.value.isMember && event.room.playback.target != null) {
+          _currentTarget = event.room.playback.target;
+          _executeNavigate(event.room.playback.target!);
+        }
       case WtUpdateAckEvent():
         room.value = event.room;
       case WtRoomUpdateEvent():
         room.value = event.room;
-        if (event.room.hostId == myTempUser.value) {
+        if (event.room.hostId == myTempUser.value && role.value.isMember) {
           role.value = WtRole.host;
+          _startLoop();
         }
       case WtMemberUpdateEvent():
         _handleMemberUpdate(event);
       case WtNavigateEvent():
+        SmartDialog.showToast('正在跟随房主切换视频');
         _executeNavigate(event.target);
       case WtPeerEvent():
         final snap = room.value;
@@ -285,10 +317,19 @@ class WatchTogetherService {
 
   void _handleError(String code) {
     switch (code) {
+      case 'room_closed':
       case 'room_not_exist':
-        SmartDialog.showToast('房间不存在或已过期');
+        if (role.value.isHost) {
+          _currentTarget = null;
+          _hostUpdate();
+          SmartDialog.showToast('房间已重建');
+        } else {
+          SmartDialog.showToast('房间已关闭或过期');
+          leave(silent: true);
+        }
       case 'wrong_password':
         SmartDialog.showToast('房间密码错误');
+        leave(silent: true);
       case 'other_host_syncing':
         SmartDialog.showToast('已有其他房主在同步');
       default:
@@ -308,6 +349,7 @@ class WatchTogetherService {
     await _statusSub?.cancel();
     _eventSub = null;
     _statusSub = null;
+    _statusIdentity = null;
     await client.disconnect();
     client.timeSync.reset();
     role.value = WtRole.none;

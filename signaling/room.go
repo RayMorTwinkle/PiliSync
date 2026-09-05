@@ -19,15 +19,15 @@ type Target struct {
 }
 
 type PlaybackState struct {
-	PlaybackRate        float64 `json:"playbackRate"`
-	CurrentTime         float64 `json:"currentTime"`
-	Paused              bool    `json:"paused"`
-	Duration            float64 `json:"duration"`
+	PlaybackRate         float64 `json:"playbackRate"`
+	CurrentTime          float64 `json:"currentTime"`
+	Paused               bool    `json:"paused"`
+	Duration             float64 `json:"duration"`
 	LastUpdateClientTime float64 `json:"lastUpdateClientTime"`
 	LastUpdateServerTime float64 `json:"lastUpdateServerTime"`
-	Url                 string  `json:"url,omitempty"`
-	VideoTitle          string  `json:"videoTitle,omitempty"`
-	Target              *Target `json:"target,omitempty"`
+	Url                  string  `json:"url,omitempty"`
+	VideoTitle           string  `json:"videoTitle,omitempty"`
+	Target               *Target `json:"target,omitempty"`
 }
 
 type Member struct {
@@ -36,72 +36,104 @@ type Member struct {
 	LastSeen  float64 `json:"-"`
 }
 
+// mu guards HostId, Playback and members. Never acquire Hub.mu while holding it.
 type Room struct {
 	Name     string
 	Password string
+
+	mu       sync.Mutex
 	HostId   string
 	Playback PlaybackState
-	WaitingForLoading bool
-	membersMu sync.Mutex
-	members   map[string]*Member
+	members  map[string]*Member
 }
 
-func (r *Room) Snapshot() map[string]any {
-	r.membersMu.Lock()
-	memberCount := len(r.members)
+func (r *Room) setHostLocked(id string) { r.HostId = id }
+
+func (r *Room) IsHost(id string) bool {
+	r.mu.Lock()
+	defer r.mu.Unlock()
+	return id != "" && id == r.HostId
+}
+
+func (r *Room) IsProtected() bool { return r.Password != md5hex("") }
+
+func (r *Room) snapshotLocked() map[string]any {
+	pb := r.Playback
+	pb.Target = nil
+	if r.Playback.Target != nil {
+		t := *r.Playback.Target
+		pb.Target = &t
+	}
 	anyLoading := false
 	for _, m := range r.members {
-		if m.IsLoading {
+		if m.IsLoading && now()-m.LastSeen < 10 {
 			anyLoading = true
 		}
 	}
-	r.membersMu.Unlock()
-
 	snap := map[string]any{
 		"name":            r.Name,
-		"protected":       r.Password != md5hex(""),
+		"protected":       r.IsProtected(),
 		"hostId":          r.HostId,
-		"memberCount":     memberCount,
+		"memberCount":     len(r.members),
 		"waitForLoadding": anyLoading,
 	}
-	b, _ := json.Marshal(r.Playback)
-	var pb map[string]any
-	_ = json.Unmarshal(b, &pb)
-	for k, v := range pb {
+	b, _ := json.Marshal(pb)
+	var pbMap map[string]any
+	_ = json.Unmarshal(b, &pbMap)
+	for k, v := range pbMap {
 		snap[k] = v
 	}
 	return snap
 }
 
-func (r *Room) Host() string { return r.HostId }
+func (r *Room) Snapshot() map[string]any {
+	r.mu.Lock()
+	defer r.mu.Unlock()
+	return r.snapshotLocked()
+}
 
-func (r *Room) SetHost(id string) { r.HostId = id }
+func (r *Room) updatePlaybackLocked(pb PlaybackState) {
+	r.Playback = pb
+}
 
-func (r *Room) IsHost(id string) bool { return id != "" && id == r.HostId }
+func (r *Room) setTargetLocked(t *Target) {
+	r.Playback.Target = t
+	r.Playback.LastUpdateServerTime = now()
+}
 
-func (r *Room) upsertMember(tempUser string) *Member {
-	r.membersMu.Lock()
-	defer r.membersMu.Unlock()
+func (r *Room) upsertMember(tempUser string) {
+	r.mu.Lock()
+	defer r.mu.Unlock()
+	r.upsertMemberLocked(tempUser)
+}
+
+func (r *Room) upsertMemberLocked(tempUser string) {
 	m, ok := r.members[tempUser]
 	if !ok {
 		m = &Member{TempUser: tempUser}
 		r.members[tempUser] = m
 	}
 	m.LastSeen = now()
-	return m
 }
 
-func (r *Room) removeMember(tempUser string) bool {
-	r.membersMu.Lock()
-	defer r.membersMu.Unlock()
-	_, ok := r.members[tempUser]
+func (r *Room) removeMember(tempUser string) {
+	r.mu.Lock()
+	defer r.mu.Unlock()
 	delete(r.members, tempUser)
-	return ok
+}
+
+func (r *Room) setLoading(tempUser string, isLoading bool) {
+	r.mu.Lock()
+	defer r.mu.Unlock()
+	if m, ok := r.members[tempUser]; ok {
+		m.IsLoading = isLoading
+		m.LastSeen = now()
+	}
 }
 
 func (r *Room) activeMembers() int {
-	r.membersMu.Lock()
-	defer r.membersMu.Unlock()
+	r.mu.Lock()
+	defer r.mu.Unlock()
 	n := 0
 	for _, m := range r.members {
 		if now()-m.LastSeen < 10 {
@@ -112,14 +144,21 @@ func (r *Room) activeMembers() int {
 }
 
 func (r *Room) anyoneLoading() bool {
-	r.membersMu.Lock()
-	defer r.membersMu.Unlock()
+	r.mu.Lock()
+	defer r.mu.Unlock()
 	for _, m := range r.members {
 		if m.IsLoading && now()-m.LastSeen < 10 {
 			return true
 		}
 	}
 	return false
+}
+
+func (r *Room) knownMember(tempUser string) bool {
+	r.mu.Lock()
+	defer r.mu.Unlock()
+	_, ok := r.members[tempUser]
+	return ok
 }
 
 func md5hex(s string) string {
@@ -132,10 +171,12 @@ var roomExpire = 3 * time.Minute
 type RoomStore struct {
 	mu    sync.Mutex
 	rooms map[string]*Room
+	// called when a room expires; the store lock is NOT held during the call
+	onExpire func(name string)
 }
 
-func NewRoomStore() *RoomStore {
-	rs := &RoomStore{rooms: make(map[string]*Room)}
+func NewRoomStore(onExpire func(name string)) *RoomStore {
+	rs := &RoomStore{rooms: make(map[string]*Room), onExpire: onExpire}
 	go rs.cleanupLoop()
 	return rs
 }
@@ -143,14 +184,24 @@ func NewRoomStore() *RoomStore {
 func (rs *RoomStore) cleanupLoop() {
 	t := time.NewTicker(30 * time.Second)
 	for range t.C {
+		var expired []string
 		rs.mu.Lock()
 		for name, room := range rs.rooms {
-			if now()-room.Playback.LastUpdateServerTime > roomExpire.Seconds() {
-				log.Printf("[cleanup] expire room %s", name)
+			room.mu.Lock()
+			stale := now()-room.Playback.LastUpdateServerTime > roomExpire.Seconds()
+			room.mu.Unlock()
+			if stale {
+				expired = append(expired, name)
 				delete(rs.rooms, name)
 			}
 		}
 		rs.mu.Unlock()
+		for _, name := range expired {
+			log.Printf("[cleanup] expire room %s", name)
+			if rs.onExpire != nil {
+				rs.onExpire(name)
+			}
+		}
 	}
 }
 
@@ -176,12 +227,6 @@ func (rs *RoomStore) GetOrCreate(name, password, hostId string) *Room {
 		log.Printf("[room] created %s host=%s", name, hostId)
 	}
 	return room
-}
-
-func (rs *RoomStore) Delete(name string) {
-	rs.mu.Lock()
-	defer rs.mu.Unlock()
-	delete(rs.rooms, name)
 }
 
 func (rs *RoomStore) Count() int {
