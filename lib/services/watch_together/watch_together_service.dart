@@ -1,6 +1,9 @@
 import 'dart:async';
 import 'dart:math';
 
+import 'package:flutter/foundation.dart';
+
+import 'package:PiliPlus/services/watch_together/wt_call_manager.dart';
 import 'package:PiliPlus/services/watch_together/wt_models.dart';
 import 'package:PiliPlus/services/watch_together/wt_player_adapter.dart';
 import 'package:PiliPlus/services/watch_together/wt_signaling_client.dart';
@@ -21,6 +24,7 @@ class WatchTogetherService {
 
   WtSignalingClient client = WtSignalingClient();
   WtPlayerAdapter player = PlPlayerAdapter();
+  final call = WtCallManager();
 
   final Rx<WtRole> role = WtRole.none.obs;
   final Rx<WtRoomSnapshot?> room = Rx<WtRoomSnapshot?>(null);
@@ -88,6 +92,7 @@ class WatchTogetherService {
     inRoom.value = true;
     _listen();
     _startLoop();
+    call.attach(client);
     if (newRole.isHost) {
       client.updatePlayback(
         WtPlaybackState(lastUpdateClientTime: client.timeSync.now()),
@@ -139,6 +144,7 @@ class WatchTogetherService {
 
   void _hostTick() {
     final target = _detectTarget();
+    debugPrint('WT_TICK route=${Get.currentRoute} args=${Get.arguments.runtimeType} target=${target?.bvid ?? target?.roomId} current=${_currentTarget?.bvid}');
     if (target != null && _isDifferentTarget(target, _currentTarget)) {
       _currentTarget = target;
       client.navigate(target);
@@ -285,11 +291,14 @@ class WatchTogetherService {
             playback: snap.playback,
           );
         }
+        if (!event.joined) {
+          call.onPeerLeft(event.tempUser);
+        }
         SmartDialog.showToast(
           event.joined ? '成员加入房间' : '成员离开房间',
         );
       case WtWebRTCEvent():
-        break;
+        unawaited(call.onSignal(event));
       case WtChatEvent():
         break;
       case WtErrorEvent():
@@ -366,6 +375,7 @@ class WatchTogetherService {
     _currentTarget = null;
     _resumeAfterLoading = false;
     _lastReportedLoading = false;
+    call.reset();
     if (!silent) {
       SmartDialog.showToast('已退出一起看');
     }
