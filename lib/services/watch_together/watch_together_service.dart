@@ -16,6 +16,12 @@ import 'package:uuid/uuid.dart';
 
 final watchTogetherService = WatchTogetherService._internal();
 
+class WtDebugLog {
+  WtDebugLog(this.t, this.msg);
+  final String t;
+  final String msg;
+}
+
 class WatchTogetherService {
   WatchTogetherService._internal();
 
@@ -39,9 +45,27 @@ class WatchTogetherService {
   WtTarget? _currentTarget;
   bool _resumeAfterLoading = false;
   bool _lastReportedLoading = false;
+  double _lastMemberSync = 0;
+  double? _memberLastSeek;
+  bool debugOverlay = false;
+
+  final RxList<WtDebugLog> debugLog = <WtDebugLog>[].obs;
+
+  void dbg(String msg) {
+    debugLog.add(
+      WtDebugLog(
+        DateTime.now().toString().substring(11, 19),
+        msg,
+      ),
+    );
+    if (debugLog.length > 60) debugLog.removeAt(0);
+    debugPrint('WT_DBG $msg');
+  }
 
   String get serverUrl =>
       GStorage.setting.get('wtServerUrl') as String? ?? '127.0.0.1:9901';
+
+  double? get memberLastSeekDebug => _memberLastSeek;
 
   set serverUrl(String value) =>
       GStorage.setting.put('wtServerUrl', value);
@@ -158,7 +182,6 @@ class WatchTogetherService {
     if (state == null) return;
     client.updatePlayback(state);
   }
-
   WtPlaybackState? _buildPlaybackState() {
     final target = _currentTarget;
     if (!player.hasPlayer) {
@@ -217,20 +240,57 @@ class WatchTogetherService {
 
   Future<void> _memberTick() async {
     final snap = room.value;
-    if (snap == null || !player.hasPlayer || player.isLive) return;
+    if (snap == null) return;
+    if (!player.hasPlayer) {
+      dbg('MTICK skip: no player (route=${Get.currentRoute})');
+      return;
+    }
+    if (player.isLive) {
+      dbg('MTICK skip: live');
+      return;
+    }
+
+    // VT: 1s throttle between member syncs (vt.js:3463)
     final now = client.timeSync.now();
-    final roomRealTime = WtPlaybackLogic.extrapolateCurrent(snap.playback, now);
+    if (now - _lastMemberSync < 1.0) return;
+    _lastMemberSync = now;
+
+    final roomRealTime = WtPlaybackLogic.extrapolateCurrent(
+      snap.playback,
+      now,
+    );
+    final localTime = player.positionMs / 1000;
+
+    // settling = we just seeked and the player hasn't reached the target yet
+    final settling = _memberLastSeek != null &&
+        (_memberLastSeek! - localTime).abs() > 0.1;
+
     final action = WtPlaybackLogic.calibrate(
       room: snap.playback,
       localPaused: !player.isPlaying,
-      localTime: player.positionMs / 1000,
+      localTime: localTime,
       localRate: player.speed,
       roomRealTime: roomRealTime,
+      waitForLoadding: snap.waitForLoadding,
+      isSettling: settling,
     );
     if (!action.isEmpty) {
+      if (action.seekTo != null) {
+        _memberLastSeek = action.seekTo!;
+      }
+      dbg(
+        'CALIBRATE ${action}local=$localTime room=${snap.playback.currentTime}'
+        '(${snap.playback.paused ? "paused" : "playing"}) settle=$settling',
+      );
       await _executeAction(action);
     }
-    _reportLoading();
+
+    // VT-style loading self-check (vt.js:3532): after our own seek the
+    // position stays put while buffering -> report loading to pause everyone
+    final seeking = _memberLastSeek != null &&
+        (_memberLastSeek! - localTime).abs() < 0.01;
+    final loading = player.isBuffering || seeking;
+    _reportLoading(loading);
   }
 
   Future<void> _executeAction(WtSyncAction action) async {
@@ -249,8 +309,8 @@ class WatchTogetherService {
     }
   }
 
-  void _reportLoading() {
-    final loading = player.isBuffering;
+  void _reportLoading([bool? forced]) {
+    final loading = forced ?? player.isBuffering;
     if (loading != _lastReportedLoading) {
       _lastReportedLoading = loading;
       client.updateMember(loading);
@@ -258,6 +318,7 @@ class WatchTogetherService {
   }
 
   void _handleEvent(WtEvent event) {
+    dbg('EVT ${event.runtimeType}');
     switch (event) {
       case WtJoinedEvent():
         room.value = event.room;
@@ -375,6 +436,9 @@ class WatchTogetherService {
     _currentTarget = null;
     _resumeAfterLoading = false;
     _lastReportedLoading = false;
+    _lastMemberSync = 0;
+    _memberLastSeek = null;
+    debugLog.clear();
     call.reset();
     if (!silent) {
       SmartDialog.showToast('已退出一起看');

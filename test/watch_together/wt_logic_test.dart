@@ -73,6 +73,8 @@ void main() {
       final r = room(paused: false, currentTime: 100);
       final action = WtPlaybackLogic.calibrate(
         room: r,
+        waitForLoadding: false,
+        isSettling: false,
         localPaused: false,
         localTime: 100.5,
         localRate: 1,
@@ -85,6 +87,8 @@ void main() {
       final r = room(paused: false, currentTime: 100);
       final action = WtPlaybackLogic.calibrate(
         room: r,
+        waitForLoadding: false,
+        isSettling: false,
         localPaused: false,
         localTime: 102.0,
         localRate: 1,
@@ -97,6 +101,8 @@ void main() {
       final r = room(paused: true, currentTime: 100);
       final action = WtPlaybackLogic.calibrate(
         room: r,
+        waitForLoadding: false,
+        isSettling: false,
         localPaused: true,
         localTime: 100.2,
         localRate: 1,
@@ -109,6 +115,8 @@ void main() {
       final r = room(paused: false);
       final action = WtPlaybackLogic.calibrate(
         room: r,
+        waitForLoadding: false,
+        isSettling: false,
         localPaused: true,
         localTime: 100.0,
         localRate: 1,
@@ -121,12 +129,42 @@ void main() {
       final r = room(paused: false, rate: 2);
       final action = WtPlaybackLogic.calibrate(
         room: r,
+        waitForLoadding: false,
+        isSettling: false,
         localPaused: false,
         localTime: 100.0,
         localRate: 1,
         roomRealTime: 100.0,
       );
       expect(action.playbackRate, 2);
+    });
+
+    test('waitForLoadding forces member pause', () {
+      final r = room(paused: false, currentTime: 100);
+      final action = WtPlaybackLogic.calibrate(
+        room: r,
+        waitForLoadding: true,
+        isSettling: false,
+        localPaused: false,
+        localTime: 100.0,
+        localRate: 1,
+        roomRealTime: 100.0,
+      );
+      expect(action.play, isFalse);
+    });
+
+    test('settling skips all actions', () {
+      final r = room(paused: false, currentTime: 100);
+      final action = WtPlaybackLogic.calibrate(
+        room: r,
+        waitForLoadding: false,
+        isSettling: true,
+        localPaused: false,
+        localTime: 50.0,
+        localRate: 1,
+        roomRealTime: 100.0,
+      );
+      expect(action.isEmpty, isTrue);
     });
   });
 
