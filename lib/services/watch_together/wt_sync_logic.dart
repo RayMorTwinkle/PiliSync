@@ -45,24 +45,43 @@ class WtPlaybackLogic {
         (nowSeconds - room.lastUpdateClientTime) * room.playbackRate;
   }
 
+  /// VT-style member calibration (vt.js SyncMemberVideo):
+  /// 1. derive effective paused (waitForLoadding pauses members too)
+  /// 2. only seek when drift exceeds threshold; after a seek the member is
+  ///    "settling" — it reports loading and skips further actions until the
+  ///    player position actually moves away from the seek target
+  /// 3. play/pause/rate follow room state
   static WtSyncAction calibrate({
     required WtPlaybackState room,
     required bool localPaused,
     required double localTime,
     required double localRate,
     required double roomRealTime,
+    required bool waitForLoadding,
+    required bool isSettling,
   }) {
     double? seekTo;
     bool? play;
     double? rate;
 
-    if (room.paused != localPaused) {
-      play = !room.paused;
+    bool paused = room.paused;
+    if (waitForLoadding && !paused) {
+      paused = true;
     }
 
-    final target = room.paused ? room.currentTime : roomRealTime;
+    if (isSettling) {
+      // after a seek, wait until the player actually reaches the target
+      // before doing anything else
+      return const WtSyncAction();
+    }
+
+    if (paused != localPaused) {
+      play = !paused;
+    }
+
+    final target = paused ? room.currentTime : roomRealTime;
     final diff = (localTime - target).abs();
-    final threshold = room.paused ? pausedSeekThreshold : playingSeekThreshold;
+    final threshold = paused ? pausedSeekThreshold : playingSeekThreshold;
     if (diff > threshold) {
       seekTo = target;
     }

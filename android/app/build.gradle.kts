@@ -55,7 +55,7 @@ android {
     }
 
     buildFeatures {
-        if (project.hasProperty("dev")) {
+        if (project.hasProperty("dev") || project.hasProperty("wtSuffix")) {
             resValues = true
         }
     }
@@ -79,7 +79,14 @@ android {
 //            )
         }
         debug {
-            applicationIdSuffix = ".debug"
+            applicationIdSuffix = ".debug" + (project.findProperty("wtSuffix") as String? ?: "")
+            if (project.hasProperty("wtSuffix")) {
+                resValue(
+                    type = "string",
+                    name = "app_name",
+                    value = "PiliNara wt",
+                )
+            }
         }
     }
 

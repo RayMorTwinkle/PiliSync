@@ -189,6 +189,8 @@ class _WatchTogetherPageState extends State<WatchTogetherPage> {
           ),
         const SizedBox(height: 12),
         _voiceButton(),
+        const SizedBox(height: 12),
+        _debugPanel(theme),
         const SizedBox(height: 24),
         FilledButton.tonal(
           onPressed: _busy ? null : _leave,
@@ -198,8 +200,76 @@ class _WatchTogetherPageState extends State<WatchTogetherPage> {
     );
   }
 
-  Widget _voiceButton() {
+  Widget _debugPanel(ThemeData theme) {
     final call = service.call;
+    return Obx(() {
+      final open = service.debugOverlay;
+      return Card(
+        child: Padding(
+          padding: const EdgeInsets.all(12),
+          child: Column(
+            crossAxisAlignment: CrossAxisAlignment.start,
+            children: [
+              InkWell(
+                onTap: () => service.debugOverlay = !open,
+                child: Row(
+                  children: [
+                    const Icon(Icons.bug_report, size: 18),
+                    const SizedBox(width: 6),
+                    Text('Debug', style: theme.textTheme.titleSmall),
+                    const Spacer(),
+                    Icon(open ? Icons.expand_less : Icons.expand_more, size: 18),
+                  ],
+                ),
+              ),
+              if (open) ...[
+                const SizedBox(height: 8),
+                Text(
+                  'role=${service.role.value} conn=${service.client.state} '
+                  'tsOffset=${service.client.timeSync.offset.toStringAsFixed(1)} '
+                  'minTrip=${service.client.timeSync.hasValidSample ? service.client.timeSync.minTrip.toStringAsFixed(3) : "-"}',
+                  style: theme.textTheme.bodySmall,
+                ),
+                Text(
+                  'call=${call.state} mic=${call.micMuted} '
+                  'room=${service.room.value?.name} members=${service.room.value?.memberCount} '
+                  'wait=${service.room.value?.waitForLoadding}',
+                  style: theme.textTheme.bodySmall,
+                ),
+                Text(
+                  'pos=${(service.player.positionMs / 1000).toStringAsFixed(1)} '
+                  'playing=${service.player.isPlaying} buf=${service.player.isBuffering} '
+                  'lastSeek=${service.memberLastSeekDebug}',
+                  style: theme.textTheme.bodySmall,
+                ),
+                const Divider(height: 12),
+                SizedBox(
+                  height: 150,
+                  child: ListView.builder(
+                    reverse: true,
+                    itemCount: service.debugLog.length,
+                    itemBuilder: (_, i) {
+                      final log =
+                          service.debugLog[service.debugLog.length - 1 - i];
+                      return Text(
+                        '${log.t} ${log.msg}',
+                        style: theme.textTheme.bodySmall?.copyWith(
+                          fontFamily: 'monospace',
+                          fontSize: 10,
+                        ),
+                      );
+                    },
+                  ),
+                ),
+              ],
+            ],
+          ),
+        ),
+      );
+    });
+  }
+
+  Widget _voiceButton() {    final call = service.call;
     return Obx(() {
       final callState = call.state;
       return Column(
