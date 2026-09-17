@@ -1,4 +1,4 @@
-import 'dart:async' show StreamSubscription, Timer, unawaited;
+import 'dart:async' show StreamController, StreamSubscription, Timer, unawaited;
 import 'dart:convert' show ascii, utf8;
 import 'dart:io' show Platform;
 import 'dart:math' show max, min;
@@ -80,6 +80,12 @@ class PlPlayerController with BlockConfigMixin {
   static PlPlayerController? _instance;
 
   final playerStatus = PlPlayerStatus(.playing);
+
+  /// Commands, not status changes. Sync callers opt out per invocation; other
+  /// callers (including lifecycle controls) are observable even if already paused.
+  /// Delivered before awaiting the engine so intent cannot lag behind status.
+  final _playbackRequests = StreamController<bool>.broadcast(sync: true);
+  Stream<bool> get playbackRequests => _playbackRequests.stream;
 
   final Rx<DataStatus> dataStatus = Rx(.none);
 
@@ -561,6 +567,9 @@ class PlPlayerController with BlockConfigMixin {
   }) async {
     if (_instance?.playerStatus.isPlaying ?? false) {
       await _instance?.pause(notify: notify, isInterrupt: isInterrupt);
+    } else {
+      // Preserve the no-op engine path, but do not lose an explicit pause.
+      _instance?._playbackRequests.add(false);
     }
   }
 
@@ -1455,7 +1464,12 @@ class PlPlayerController with BlockConfigMixin {
   }
 
   /// 播放视频
-  Future<void> play({bool repeat = false, bool hideControls = true}) async {
+  Future<void> play({
+    bool repeat = false,
+    bool hideControls = true,
+    bool isSync = false,
+  }) async {
+    if (!isSync) _playbackRequests.add(true);
     if (_playerCount == 0) return;
     // 播放时自动隐藏控制条
     final showControlsOnNextPlay = _consumeShowControlsOnNextPlay();
@@ -1471,7 +1485,12 @@ class PlPlayerController with BlockConfigMixin {
   }
 
   /// 暂停播放
-  Future<void> pause({bool notify = true, bool isInterrupt = false}) async {
+  Future<void> pause({
+    bool notify = true,
+    bool isInterrupt = false,
+    bool isSync = false,
+  }) async {
+    if (!isSync) _playbackRequests.add(false);
     await _videoPlayerController?.pause();
     playerStatus.value = PlayerStatus.paused;
 
@@ -2156,6 +2175,7 @@ class PlPlayerController with BlockConfigMixin {
     _removeListeners();
     _positionListeners.clear();
     _statusListeners.clear();
+    unawaited(_playbackRequests.close());
     if (playerStatus.isPlaying) {
       WakelockPlus.disable();
     }

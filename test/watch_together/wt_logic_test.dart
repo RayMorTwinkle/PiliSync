@@ -153,7 +153,7 @@ void main() {
       expect(action.play, isFalse);
     });
 
-    test('settling skips all actions', () {
+    test('settling suppresses repeated seek', () {
       final r = room(paused: false, currentTime: 100);
       final action = WtPlaybackLogic.calibrate(
         room: r,
