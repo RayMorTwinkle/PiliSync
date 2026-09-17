@@ -1,27 +1,17 @@
 import 'dart:async';
 
+import 'package:PiliPlus/services/watch_together/wt_player_port.dart';
+export 'package:PiliPlus/services/watch_together/wt_player_port.dart';
+
 import 'package:PiliPlus/plugin/pl_player/controller.dart';
 import 'package:PiliPlus/plugin/pl_player/models/play_status.dart';
 
-abstract interface class WtPlayerAdapter {
-  bool get hasPlayer;
-  bool get isPlaying;
-  bool get isBuffering;
-  double get positionMs;
-  double get durationMs;
-  double get speed;
-  bool get isLive;
-  Object? get identity;
-
-  Future<void> play();
-  Future<void> pause();
-  Future<void> seekToMs(double ms);
-  Future<void> setSpeed(double speed);
-
-  StreamSubscription<void> onStatusChanged(void Function(bool playing) cb);
+/// Optional command source, independent of playback status notifications.
+abstract interface class WtPlaybackCommandSource {
+  StreamSubscription<bool> onPlaybackRequest(void Function(bool playing) cb);
 }
 
-class PlPlayerAdapter implements WtPlayerAdapter {
+class PlPlayerAdapter implements WtPlayerAdapter, WtPlaybackCommandSource {
   PlPlayerController? get _p => PlPlayerController.instance;
 
   @override
@@ -49,10 +39,15 @@ class PlPlayerAdapter implements WtPlayerAdapter {
   Object? get identity => _p;
 
   @override
-  Future<void> play() async => _p?.play();
+  Future<void> play() async => _p?.play(isSync: true);
 
   @override
-  Future<void> pause() async => _p?.pause();
+  Future<void> pause() async => _p?.pause(isSync: true);
+
+  /// Subscribe again when [identity] changes, just like status notifications.
+  @override
+  StreamSubscription<bool> onPlaybackRequest(void Function(bool playing) cb) =>
+      (_p?.playbackRequests ?? const Stream<bool>.empty()).listen(cb);
 
   @override
   Future<void> seekToMs(double ms) async =>

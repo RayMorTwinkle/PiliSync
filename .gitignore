@@ -164,6 +164,10 @@ CONTEXT.md
 
 .claude
 test*
+# Keep watch-together regression tests in version control.
+!/test/
+!/test/watch_together/
+!/test/watch_together/**
 /pubspec_overrides.yaml
 .mindfs
 signaling/signaling-server

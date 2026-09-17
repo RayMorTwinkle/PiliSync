@@ -4,10 +4,12 @@ import 'dart:math';
 import 'package:flutter/foundation.dart';
 
 import 'package:PiliPlus/services/watch_together/wt_call_manager.dart';
+import 'package:PiliPlus/services/watch_together/wt_debug_server.dart';
 import 'package:PiliPlus/services/watch_together/wt_models.dart';
 import 'package:PiliPlus/services/watch_together/wt_player_adapter.dart';
+import 'package:PiliPlus/services/watch_together/wt_playback_coordinator.dart';
 import 'package:PiliPlus/services/watch_together/wt_signaling_client.dart';
-import 'package:PiliPlus/services/watch_together/wt_sync_logic.dart';
+import 'package:PiliPlus/services/watch_together/wt_member_coordinator.dart';
 import 'package:PiliPlus/utils/page_utils.dart';
 import 'package:PiliPlus/utils/storage.dart';
 import 'package:flutter_smart_dialog/flutter_smart_dialog.dart';
@@ -23,7 +25,25 @@ class WtDebugLog {
 }
 
 class WatchTogetherService {
-  WatchTogetherService._internal();
+  WatchTogetherService._internal() {
+    if (kDebugMode) {
+      unawaited(WtDebugServer.start());
+    }
+  }
+
+  @visibleForTesting
+  WatchTogetherService.forTesting({
+    required this.player,
+    required this.client,
+    required this.clock,
+  });
+
+  /// Injectable clock for tests; falls back to the signaling time sync.
+  @visibleForTesting
+  double Function()? clock;
+
+  @visibleForTesting
+  Future<void> tickForTesting() => _tick();
 
   static const _hostLoopInterval = Duration(seconds: 2);
   static const _memberLoopInterval = Duration(milliseconds: 500);
@@ -31,6 +51,7 @@ class WatchTogetherService {
   WtSignalingClient client = WtSignalingClient();
   WtPlayerAdapter player = PlPlayerAdapter();
   final call = WtCallManager();
+  final WtHostPlaybackIntent hostIntent = WtHostPlaybackIntent();
 
   final Rx<WtRole> role = WtRole.none.obs;
   final Rx<WtRoomSnapshot?> room = Rx<WtRoomSnapshot?>(null);
@@ -39,14 +60,13 @@ class WatchTogetherService {
 
   StreamSubscription<WtEvent>? _eventSub;
   StreamSubscription<void>? _statusSub;
+  StreamSubscription<bool>? _playbackReqSub;
   Object? _statusIdentity;
   Timer? _loop;
   bool _ticking = false;
   WtTarget? _currentTarget;
-  bool _resumeAfterLoading = false;
   bool _lastReportedLoading = false;
-  double _lastMemberSync = 0;
-  double? _memberLastSeek;
+  final _memberCoordinator = WtMemberCoordinator();
   bool debugOverlay = false;
 
   final RxList<WtDebugLog> debugLog = <WtDebugLog>[].obs;
@@ -65,7 +85,7 @@ class WatchTogetherService {
   String get serverUrl =>
       GStorage.setting.get('wtServerUrl') as String? ?? '127.0.0.1:9901';
 
-  double? get memberLastSeekDebug => _memberLastSeek;
+  double? get memberLastSeekDebug => _memberCoordinator.lastSeek;
 
   set serverUrl(String value) =>
       GStorage.setting.put('wtServerUrl', value);
@@ -133,6 +153,8 @@ class WatchTogetherService {
     if (_statusIdentity == player.identity) return;
     unawaited(_statusSub?.cancel());
     _statusSub = null;
+    unawaited(_playbackReqSub?.cancel());
+    _playbackReqSub = null;
     _statusIdentity = player.identity;
     if (player.identity != null) {
       _statusSub = player.onStatusChanged((playing) {
@@ -140,6 +162,15 @@ class WatchTogetherService {
           _hostUpdate();
         }
       });
+      if (player is WtPlaybackCommandSource) {
+        _playbackReqSub = (player as WtPlaybackCommandSource)
+            .onPlaybackRequest((playing) {
+          if (role.value.isHost) {
+            hostIntent.onPlaybackRequest(playing);
+            _hostUpdate();
+          }
+        });
+      }
     }
   }
 
@@ -184,6 +215,10 @@ class WatchTogetherService {
   }
   WtPlaybackState? _buildPlaybackState() {
     final target = _currentTarget;
+    final reportedPaused = hostIntent.reportedPaused(
+      isPlaying: player.hasPlayer && player.isPlaying,
+      isBuffering: player.hasPlayer && player.isBuffering,
+    );
     if (!player.hasPlayer) {
       return WtPlaybackState(
         paused: true,
@@ -197,7 +232,7 @@ class WatchTogetherService {
       playbackRate: player.speed,
       currentTime: player.positionMs / 1000,
       duration: player.durationMs / 1000,
-      paused: !player.isPlaying,
+      paused: reportedPaused,
       lastUpdateClientTime: client.timeSync.now(),
       url: target?.bvid,
       videoTitle: target?.title,
@@ -250,63 +285,14 @@ class WatchTogetherService {
       return;
     }
 
-    // VT: 1s throttle between member syncs (vt.js:3463)
-    final now = client.timeSync.now();
-    if (now - _lastMemberSync < 1.0) return;
-    _lastMemberSync = now;
-
-    final roomRealTime = WtPlaybackLogic.extrapolateCurrent(
-      snap.playback,
-      now,
-    );
-    final localTime = player.positionMs / 1000;
-
-    // settling = we just seeked and the player hasn't reached the target yet
-    final settling = _memberLastSeek != null &&
-        (_memberLastSeek! - localTime).abs() > 0.1;
-
-    final action = WtPlaybackLogic.calibrate(
+    await _memberCoordinator.tick(
       room: snap.playback,
-      localPaused: !player.isPlaying,
-      localTime: localTime,
-      localRate: player.speed,
-      roomRealTime: roomRealTime,
-      waitForLoadding: snap.waitForLoadding,
-      isSettling: settling,
+      waitForLoading: snap.waitForLoadding,
+      now: clock?.call() ?? client.timeSync.now(),
+      player: player,
+      reportLoading: _reportLoading,
+      log: dbg,
     );
-    if (!action.isEmpty) {
-      if (action.seekTo != null) {
-        _memberLastSeek = action.seekTo!;
-      }
-      dbg(
-        'CALIBRATE ${action}local=$localTime room=${snap.playback.currentTime}'
-        '(${snap.playback.paused ? "paused" : "playing"}) settle=$settling',
-      );
-      await _executeAction(action);
-    }
-
-    // VT-style loading self-check (vt.js:3532): after our own seek the
-    // position stays put while buffering -> report loading to pause everyone
-    final seeking = _memberLastSeek != null &&
-        (_memberLastSeek! - localTime).abs() < 0.01;
-    final loading = player.isBuffering || seeking;
-    _reportLoading(loading);
-  }
-
-  Future<void> _executeAction(WtSyncAction action) async {
-    if (action.seekTo != null) {
-      await player.seekToMs(action.seekTo! * 1000);
-    }
-    if (action.playbackRate != null) {
-      await player.setSpeed(action.playbackRate!);
-    }
-    if (action.play != null) {
-      if (action.play!) {
-        await player.play();
-      } else {
-        await player.pause();
-      }
-    }
   }
 
   void _reportLoading([bool? forced]) {
@@ -369,13 +355,13 @@ class WatchTogetherService {
 
   void _handleMemberUpdate(WtMemberUpdateEvent event) {
     if (!role.value.isHost) return;
-    if (event.waitForLoadding) {
-      if (player.isPlaying) {
-        _resumeAfterLoading = true;
-        player.pause();
-      }
-    } else if (_resumeAfterLoading) {
-      _resumeAfterLoading = false;
+    final resume = hostIntent.updateBarrier(
+      waiting: event.waitForLoadding,
+      isPlaying: player.hasPlayer && player.isPlaying,
+    );
+    if (resume == false) {
+      player.pause();
+    } else if (resume == true) {
       player.play();
     }
   }
@@ -427,6 +413,8 @@ class WatchTogetherService {
     await _statusSub?.cancel();
     _eventSub = null;
     _statusSub = null;
+    await _playbackReqSub?.cancel();
+    _playbackReqSub = null;
     _statusIdentity = null;
     await client.disconnect();
     client.timeSync.reset();
@@ -434,10 +422,9 @@ class WatchTogetherService {
     inRoom.value = false;
     room.value = null;
     _currentTarget = null;
-    _resumeAfterLoading = false;
+    hostIntent.reset();
     _lastReportedLoading = false;
-    _lastMemberSync = 0;
-    _memberLastSeek = null;
+    _memberCoordinator.reset();
     debugLog.clear();
     call.reset();
     if (!silent) {
