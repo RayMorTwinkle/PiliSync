@@ -1,5 +1,6 @@
 import 'dart:async';
 
+import 'package:flutter/foundation.dart';
 import 'package:flutter_webrtc/flutter_webrtc.dart' as fwr;
 import 'package:get/get.dart' hide navigator;
 
@@ -21,6 +22,12 @@ class WtCallManager {
   String? _peerId;
   WtSignalingClient? _client;
 
+  // Signaling events are processed strictly in arrival order so an ICE
+  // candidate can never overtake the offer/answer it depends on.
+  Future<void> _signalWork = Future<void>.value();
+  bool _hasRemoteDescription = false;
+  final List<fwr.RTCIceCandidate> _pendingCandidates = [];
+
   WtCallState get state => _state.value;
   bool get micMuted => _micMuted.value;
   bool get speakerOn => _speakerOn.value;
@@ -31,24 +38,28 @@ class WtCallManager {
   }
 
   void reset() {
+    if (_peerId != null && _state.value != WtCallState.idle) {
+      _sendSignal({'kind': 'bye'});
+    }
     _teardown();
     _state.value = WtCallState.idle;
     _peerId = null;
+    _micMuted.value = false;
+    _speakerOn.value = true;
   }
 
+  /// [peerId] may be a concrete member uuid or the server-side alias
+  /// "peer" (the sole other member — the only mode the UI enables).
+  /// Empty targets are rejected by the server and were the old
+  /// broadcast-everyone bug.
   Future<void> start(String peerId) async {
-    if (_state.value != WtCallState.idle) return;
+    if (peerId.isEmpty || _state.value != WtCallState.idle) return;
     _peerId = peerId;
     _state.value = WtCallState.calling;
     try {
+      await _ensureIceConfig();
       await _createPeer();
-      _localStream = await fwr.navigator.mediaDevices.getUserMedia({
-        'audio': true,
-        'video': false,
-      });
-      for (final track in _localStream!.getTracks()) {
-        await _pc?.addTrack(track, _localStream!);
-      }
+      await _getMic();
       final offer = await _pc!.createOffer();
       await _pc!.setLocalDescription(offer);
       _sendSignal({
@@ -61,11 +72,33 @@ class WtCallManager {
     }
   }
 
+  static const _fallbackIce = [
+    {'urls': 'stun:stun.l.google.com:19302'},
+  ];
+  List<Map<String, dynamic>>? _iceServers;
+
+  /// Pull TURN/STUN config from the signaling server (it holds the TURN
+  /// API secret; clients only ever see short-lived ICE credentials).
+  Future<void> _ensureIceConfig() async {
+    _iceServers = await _client?.fetchIceServers() ?? _fallbackIce;
+  }
+
+  Future<void> _getMic() async {
+    _localStream = await fwr.navigator.mediaDevices.getUserMedia({
+      'audio': true,
+      'video': false,
+    });
+    for (final track in _localStream!.getTracks()) {
+      await _pc?.addTrack(track, _localStream!);
+    }
+    await fwr.Helper.setSpeakerphoneOn(_speakerOn.value);
+  }
+
   Future<void> _createPeer() async {
+    _hasRemoteDescription = false;
+    _pendingCandidates.clear();
     _pc = await fwr.createPeerConnection({
-      'iceServers': [
-        {'urls': 'stun:stun.l.google.com:19302'},
-      ],
+      'iceServers': _iceServers ?? _fallbackIce,
     });
     _pc!.onTrack = (event) {
       if (event.streams.isNotEmpty) {
@@ -85,6 +118,9 @@ class WtCallManager {
       switch (state) {
         case fwr.RTCPeerConnectionState.RTCPeerConnectionStateFailed:
         case fwr.RTCPeerConnectionState.RTCPeerConnectionStateDisconnected:
+          // Release the mic immediately on failure; previously the track
+          // stayed live until the user manually hung up.
+          _teardown();
           _state.value = WtCallState.failed;
         case fwr.RTCPeerConnectionState.RTCPeerConnectionStateClosed:
           if (_state.value == WtCallState.connected) {
@@ -96,56 +132,105 @@ class WtCallManager {
     };
   }
 
-  Future<void> onSignal(WtWebRTCEvent event) async {
+  Future<void> onSignal(WtWebRTCEvent event) {
+    _signalWork = _signalWork
+        .then((_) => _handleSignal(event))
+        .catchError((_) {});
+    return _signalWork;
+  }
+
+  /// Deterministic glare resolution: both sides compute the same polite
+  /// flag from the ordered id pair, so exactly one side rolls back.
+  bool get _polite {
+    final me = _client?.tempUser ?? '';
+    final peer = _peerId ?? '';
+    return me.compareTo(peer) > 0;
+  }
+
+  /// "peer"/"host" are server-side aliases, not a bound uuid: the first
+  /// inbound signal binds us to the real sender.
+  bool get _bound =>
+      _peerId != null && _peerId != 'peer' && _peerId != 'host';
+
+  Future<void> _handleSignal(WtWebRTCEvent event) async {
     final payload = event.payload;
-    if (payload['kind'] == 'bye') {
-      reset();
+    final kind = payload['kind'] as String?;
+
+    // Once bound to a peer, drop every signal that is not from it;
+    // before binding, only an offer may bind us while idle — mid-call,
+    // the responder's first signal binds us to their real uuid.
+    if (_bound) {
+      if (event.from != _peerId) return;
+    } else if (_state.value == WtCallState.idle && kind != 'offer') {
       return;
-    }
-    if (_state.value == WtCallState.idle &&
-        payload['kind'] == 'offer') {
+    } else if (_state.value != WtCallState.idle) {
       _peerId = event.from;
-      _state.value = WtCallState.calling;
-      await _createPeer();
-      _localStream = await fwr.navigator.mediaDevices.getUserMedia({
-        'audio': true,
-        'video': false,
-      });
-      for (final track in _localStream!.getTracks()) {
-        await _pc?.addTrack(track, _localStream!);
-      }
-      await _pc!.setRemoteDescription(
-        fwr.RTCSessionDescription(payload['sdp'], 'offer'),
-      );
-      final answer = await _pc!.createAnswer();
-      await _pc!.setLocalDescription(answer);
-      _sendSignal({'kind': 'answer', 'sdp': answer.sdp});
-      return;
     }
-    switch (payload['kind']) {
+
+    switch (kind) {
+      case 'bye':
+        reset();
+      case 'offer':
+        if (_state.value == WtCallState.idle) {
+          _peerId = event.from;
+          _state.value = WtCallState.calling;
+          await _ensureIceConfig();
+          await _createPeer();
+          await _getMic();
+        } else if (!_polite) {
+          // Glare: we are impolite, our offer wins — ignore theirs.
+          return;
+        } else {
+          // Glare: we are polite — roll back our local offer.
+          try {
+            await _pc!.setLocalDescription(
+              fwr.RTCSessionDescription(null, 'rollback'),
+            );
+          } catch (_) {}
+        }
+        await _pc!.setRemoteDescription(
+          fwr.RTCSessionDescription(payload['sdp'], 'offer'),
+        );
+        _hasRemoteDescription = true;
+        final answer = await _pc!.createAnswer();
+        await _pc!.setLocalDescription(answer);
+        _sendSignal({'kind': 'answer', 'sdp': answer.sdp});
+        await _flushCandidates();
       case 'answer':
-        if (_pc != null) {
+        if (_pc != null && _state.value == WtCallState.calling) {
           await _pc!.setRemoteDescription(
             fwr.RTCSessionDescription(payload['sdp'], 'answer'),
           );
+          _hasRemoteDescription = true;
+          await _flushCandidates();
         }
       case 'ice':
-        if (_pc != null && payload['candidate'] != null) {
-          await _pc!.addCandidate(
-            fwr.RTCIceCandidate(
-              payload['candidate'],
-              payload['sdpMid'],
-              payload['sdpMLineIndex'],
-            ),
-          );
+        if (payload['candidate'] == null) return;
+        final candidate = fwr.RTCIceCandidate(
+          payload['candidate'],
+          payload['sdpMid'],
+          payload['sdpMLineIndex'],
+        );
+        if (_pc == null) return;
+        if (_hasRemoteDescription) {
+          await _pc!.addCandidate(candidate);
+        } else {
+          // arrived before the remote description — queue it
+          _pendingCandidates.add(candidate);
         }
     }
   }
 
-  Future<void> hangUp() async {
-    if (_peerId != null) {
-      _sendSignal({'kind': 'bye'});
+  Future<void> _flushCandidates() async {
+    for (final c in _pendingCandidates) {
+      try {
+        await _pc?.addCandidate(c);
+      } catch (_) {}
     }
+    _pendingCandidates.clear();
+  }
+
+  Future<void> hangUp() async {
     reset();
   }
 
@@ -156,12 +241,30 @@ class WtCallManager {
     _remoteStream = null;
     _pc?.close();
     _pc = null;
+    _hasRemoteDescription = false;
+    _pendingCandidates.clear();
   }
 
   void onPeerLeft(String tempUser) {
     if (_peerId == tempUser) {
       reset();
     }
+  }
+
+  /// Signaling socket dropped: the call's signaling path is dead even if
+  /// media still flows — tear down so neither side stays in a mismatched
+  /// state, and let the user redial after reconnect.
+  void onDisconnected() {
+    if (_state.value == WtCallState.idle) return;
+    _teardown();
+    _state.value = WtCallState.failed;
+  }
+
+  /// Test seam: seeds a bound peer + state without touching native RTC.
+  @visibleForTesting
+  void seedForTesting({required String peerId, required WtCallState state}) {
+    _peerId = peerId;
+    _state.value = state;
   }
 
   void toggleMic() {
@@ -177,6 +280,8 @@ class WtCallManager {
   }
 
   void _sendSignal(Map<String, dynamic> payload) {
-    _client?.sendWebRTC(_peerId ?? '', payload);
+    final peer = _peerId;
+    if (peer == null || peer.isEmpty) return;
+    _client?.sendWebRTC(peer, payload);
   }
 }

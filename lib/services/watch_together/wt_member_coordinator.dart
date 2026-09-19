@@ -7,12 +7,17 @@ class WtMemberCoordinator {
   double _lastMemberSync = 0;
   double? _memberLastSeek;
   double? get lastSeek => _memberLastSeek;
+  // Settling window after a seek: suppresses repeated seeks while the
+  // player converges (paused-seek precision is coarse).
+  double _lastSeekAt = -double.infinity;
+  static const _settleSeconds = 1.5;
   late WtPlayerAdapter player;
   late void Function(String) dbg;
 
   void reset() {
     _lastMemberSync = 0;
     _memberLastSeek = null;
+    _lastSeekAt = -double.infinity;
   }
 
   Future<void> tick({
@@ -22,6 +27,10 @@ class WtMemberCoordinator {
     required WtPlayerAdapter player,
     required void Function(bool) reportLoading,
     required void Function(String) log,
+    // Without a valid time sample the room timestamp and the local clock
+    // are in different domains — pause/play decisions still work (they do
+    // not depend on positions) but seeks must be suppressed.
+    bool canSeek = true,
   }) async {
     this.player = player;
     dbg = log;
@@ -38,8 +47,9 @@ class WtMemberCoordinator {
     // mpv exposes buffering directly. A stationary paused video is ready,
     // not evidence of buffering, and must remain able to receive play().
     _memberLastSeek = null;
+    final isSettling = now - _lastSeekAt < _settleSeconds;
 
-    final action = WtPlaybackLogic.calibrate(
+    var action = WtPlaybackLogic.calibrate(
       room: room,
       localPaused: !player.isPlaying,
       localTime: localTime,
@@ -47,11 +57,19 @@ class WtMemberCoordinator {
       roomRealTime: roomRealTime,
       waitForLoadding: waitForLoading,
       isThisMemberLoading: player.isBuffering,
-      isSettling: false,
+      isSettling: isSettling,
     );
+    if (!canSeek && action.seekTo != null) {
+      dbg('SEEK suppressed: no valid time sample');
+      action = WtSyncAction(
+        play: action.play,
+        playbackRate: action.playbackRate,
+      );
+    }
     if (!action.isEmpty) {
       if (action.seekTo != null) {
         _memberLastSeek = action.seekTo!;
+        _lastSeekAt = now;
       } else {
         // any successful non-seek round clears the pending-seek marker
         _memberLastSeek = null;

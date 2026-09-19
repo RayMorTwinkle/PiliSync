@@ -1,6 +1,24 @@
+import 'dart:io';
+
 import 'package:PiliPlus/services/watch_together/wt_models.dart';
 import 'package:PiliPlus/services/watch_together/wt_signaling_client.dart';
 import 'package:flutter_test/flutter_test.dart';
+
+/// Local e2e: requires a signaling server on 127.0.0.1:9901
+/// (`cd signaling && go run .`). Skips cleanly when it is not running.
+Future<bool> signalingUp() async {
+  try {
+    final c = await Socket.connect(
+      '127.0.0.1',
+      9901,
+      timeout: const Duration(milliseconds: 500),
+    );
+    await c.close();
+    return true;
+  } catch (_) {
+    return false;
+  }
+}
 
 void main() {
   TestWidgetsFlutterBinding.ensureInitialized();
@@ -8,7 +26,7 @@ void main() {
   late WtSignalingClient host;
   late WtSignalingClient member;
 
-  setUpAll(() async {
+  setUpAll(() {
     host = WtSignalingClient();
     member = WtSignalingClient();
   });
@@ -19,6 +37,10 @@ void main() {
   });
 
   test('end-to-end: host creates room, member joins, navigate flows', () async {
+    if (!await signalingUp()) {
+      markTestSkipped('signaling server not running on 127.0.0.1:9901');
+      return;
+    }
     final hostEvents = <WtEvent>[];
     final memberEvents = <WtEvent>[];
     final hostSub = host.events.listen(hostEvents.add);
@@ -30,10 +52,12 @@ void main() {
       user: 'h1',
       pass: '',
     );
+    host.join();
     host.updatePlayback(
       WtPlaybackState(lastUpdateClientTime: host.timeSync.now()),
     );
     await member.connect(serverBase: '127.0.0.1:9901', room: 'e2e1', user: 'm1', pass: '');
+    member.join();
 
     await Future<void>.delayed(const Duration(milliseconds: 300));
 

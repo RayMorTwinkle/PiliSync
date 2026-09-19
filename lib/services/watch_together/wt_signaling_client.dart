@@ -1,6 +1,7 @@
 import 'dart:async';
 import 'dart:convert';
 import 'dart:io';
+import 'dart:math';
 
 import 'package:PiliPlus/services/watch_together/wt_models.dart';
 import 'package:PiliPlus/services/watch_together/wt_sync_logic.dart';
@@ -19,7 +20,8 @@ class WtSignalingClient {
   int _reconnectAttempt = 0;
   bool _disposed = false;
 
-  String serverBase = '127.0.0.1:9901';
+  String serverBase = 'wt.raymor.top';
+  bool _secure = true;
   String? roomName;
   String? password;
   String? tempUser;
@@ -30,6 +32,10 @@ class WtSignalingClient {
   Stream<WtConnectionState> get connectionState => _connectionState.stream;
   WtConnectionState state = WtConnectionState.disconnected;
 
+  /// Whether the socket is currently usable (a "connected" state with a
+  /// dead socket is a fake-alive, e.g. after suspend/resume).
+  bool get isOpen => _socket?.readyState == WebSocket.open;
+
   StreamSubscription? _socketSub;
 
   void _setState(WtConnectionState s) {
@@ -37,41 +43,61 @@ class WtSignalingClient {
     _connectionState.add(s);
   }
 
+  /// Connects the socket only; joining the room is a separate [join] call
+  /// so the caller can subscribe to [events] before `joined` can arrive.
   Future<void> connect({
     required String serverBase,
     required String room,
     required String user,
     required String pass,
   }) async {
-    this.serverBase = _normalizeBase(serverBase);
+    final parsed = _normalizeBase(serverBase);
+    this.serverBase = parsed.base;
+    _secure = parsed.secure;
     roomName = room;
     tempUser = user;
     password = pass;
     _disposed = false;
     _reconnectAttempt = 0;
-    await _openSocket();
+    await _openSocket(autoJoin: false);
   }
 
-  static String _normalizeBase(String input) {
+  /// Sends join for the configured room. Call after subscribing to
+  /// [events]; reconnects re-join automatically.
+  void join() => _sendJoin();
+
+  static ({String base, bool secure}) _normalizeBase(String input) {
     var s = input.trim();
-    for (final scheme in ['https://', 'http://', 'wss://', 'ws://']) {
-      if (s.toLowerCase().startsWith(scheme)) {
+    var secure = false;
+    final lower = s.toLowerCase();
+    for (final scheme in ['wss://', 'https://']) {
+      if (lower.startsWith(scheme)) {
+        secure = true;
         s = s.substring(scheme.length);
+        break;
+      }
+    }
+    if (!secure) {
+      for (final scheme in ['ws://', 'http://']) {
+        if (lower.startsWith(scheme)) {
+          s = s.substring(scheme.length);
+          break;
+        }
       }
     }
     while (s.endsWith('/')) {
       s = s.substring(0, s.length - 1);
     }
-    return s;
+    return (base: s, secure: secure);
   }
 
-  Future<void> _openSocket() async {
+  Future<void> _openSocket({bool autoJoin = true}) async {
     if (_disposed) return;
     _setState(WtConnectionState.connecting);
     WebSocket socket;
     try {
       socket = await WebSocket.connect(
-        'ws://$serverBase/ws',
+        '${_secure ? 'wss' : 'ws'}://$serverBase/ws',
       ).timeout(const Duration(seconds: 8));
     } catch (e) {
       _setState(WtConnectionState.disconnected);
@@ -87,7 +113,7 @@ class WtSignalingClient {
     _reconnectAttempt = 0;
     _listen(socket);
     unawaited(sampleServerTime());
-    _sendJoin();
+    if (autoJoin) _sendJoin();
     _startTimeSync();
   }
 
@@ -114,10 +140,25 @@ class WtSignalingClient {
     _scheduleReconnect();
   }
 
+  /// Called periodically by the service: detects fake-alive sockets (state
+  /// says connected but the socket is dead) and starts recovery early
+  /// instead of waiting for the ping timeout.
+  void ensureAlive() {
+    if (_disposed || roomName == null) return;
+    if (state == WtConnectionState.connected && !isOpen) {
+      _handleDisconnect();
+    }
+  }
+
+  static const _maxReconnectAttempt = 12;
+
   void _scheduleReconnect() {
     if (_disposed || _reconnectTimer != null) return;
+    if (_reconnectAttempt >= _maxReconnectAttempt) return;
+    final exp = (1 << _reconnectAttempt.clamp(0, 4)).clamp(1, 15);
+    // full jitter to avoid synchronized reconnect storms
     final delay = Duration(
-      seconds: (1 << _reconnectAttempt.clamp(0, 5)).clamp(1, 30),
+      milliseconds: (exp * 1000 * Random().nextDouble()).round() + 500,
     );
     _reconnectAttempt++;
     _reconnectTimer = Timer(delay, () {
@@ -136,6 +177,14 @@ class WtSignalingClient {
     });
   }
 
+  void _sampleEcho(Map<String, dynamic> msg) {
+    final t = (msg['t'] as num?)?.toDouble();
+    final server = (msg['timestamp'] as num?)?.toDouble();
+    if (t != null && server != null) {
+      timeSync.updateIfNeeded(server, t, timeSync.localNow());
+    }
+  }
+
   void _handleServerMessage(Map<String, dynamic> msg) {
     switch (msg['type'] as String?) {
       case 'ping':
@@ -151,15 +200,11 @@ class WtSignalingClient {
         final room = WtRoomSnapshot.fromJson(
           msg['room'] as Map<String, dynamic>,
         );
-        timeSync.updateIfNeeded(
-          msg['timestamp'] as num,
-          msg['timestamp'] as num,
-          timeSync.localNow(),
-        );
         _events.add(
           WtJoinedEvent(room, msg['isHost'] as bool? ?? false, timeSync.now()),
         );
       case 'update_ack':
+        _sampleEcho(msg);
         _events.add(
           WtUpdateAckEvent(
             WtRoomSnapshot.fromJson(msg['room'] as Map<String, dynamic>),
@@ -174,6 +219,11 @@ class WtSignalingClient {
           ),
         );
       case 'member_update':
+        // the server echoes our own update_member back; the `t` echo is a
+        // valid time sample only when we were the sender.
+        if (msg['tempUser'] == tempUser) {
+          _sampleEcho(msg);
+        }
         _events.add(
           WtMemberUpdateEvent(
             msg['tempUser'] as String? ?? '',
@@ -227,34 +277,44 @@ class WtSignalingClient {
     }
   }
 
-  void _sendRaw(Map<String, dynamic> msg) {
+  /// Returns false when the message was dropped because the socket is not
+  /// open (e.g. mid-reconnect). Callers that care can surface it.
+  bool _sendRaw(Map<String, dynamic> msg) {
     final socket = _socket;
-    if (socket == null || socket.readyState != WebSocket.open) return;
+    if (socket == null || socket.readyState != WebSocket.open) {
+      return false;
+    }
     socket.add(utf8.encode(jsonEncode(msg)));
+    return true;
   }
 
-  void updatePlayback(WtPlaybackState playback) {
-    _sendRaw({
+  /// Returns false when the socket was not open — the caller can retry on
+  /// its next tick instead of silently losing the state.
+  bool updatePlayback(WtPlaybackState playback) {
+    return _sendRaw({
       'type': 'update',
       'room': roomName,
       'password': password,
       'tempUser': tempUser,
       'playback': playback.toJson(),
+      't': timeSync.localNow(),
     });
   }
 
-  void updateMember(bool isLoading) {
-    _sendRaw({
+  bool updateMember(bool isLoading, {WtTarget? target}) {
+    return _sendRaw({
       'type': 'update_member',
       'room': roomName,
       'password': password,
       'tempUser': tempUser,
       'isLoading': isLoading,
+      if (target != null) 'target': target.toJson(),
+      't': timeSync.localNow(),
     });
   }
 
-  void navigate(WtTarget target) {
-    _sendRaw({
+  bool navigate(WtTarget target) {
+    return _sendRaw({
       'type': 'navigate',
       'room': roomName,
       'password': password,
@@ -263,8 +323,8 @@ class WtSignalingClient {
     });
   }
 
-  void sendWebRTC(String to, Map<String, dynamic> payload) {
-    _sendRaw({
+  bool sendWebRTC(String to, Map<String, dynamic> payload) {
+    return _sendRaw({
       'type': 'webrtc',
       'room': roomName,
       'password': password,
@@ -274,15 +334,8 @@ class WtSignalingClient {
     });
   }
 
-  void sendChat(String text) {
-    _sendRaw({
-      'type': 'chat',
-      'room': roomName,
-      'password': password,
-      'tempUser': tempUser,
-      'text': text,
-    });
-  }
+  // sendChat removed: the chat path is dead code client-side (no UI), the
+  // server still relays chat for future use.
 
   Future<void> _startTimeSync() async {
     _tsyncTimer?.cancel();
@@ -295,11 +348,39 @@ class WtSignalingClient {
     });
   }
 
+  /// Fetches the WebRTC iceServers array from the signaling server. The
+  /// server mints short-lived TURN credentials upstream (Cloudflare) so
+  /// the TURN API token never ships in the app; falls back to public
+  /// STUN when the endpoint is unreachable or unconfigured.
+  Future<List<Map<String, dynamic>>> fetchIceServers() async {
+    try {
+      final request = await _httpClient
+          .getUrl(
+            Uri.parse(
+              '${_secure ? 'https' : 'http'}://$serverBase/ice-servers',
+            ),
+          )
+          .timeout(const Duration(seconds: 5));
+      final response = await request.close();
+      final body = await response.transform(utf8.decoder).join();
+      final json = jsonDecode(body) as Map<String, dynamic>;
+      final list = json['iceServers'] as List?;
+      if (list != null && list.isNotEmpty) {
+        return list.whereType<Map<String, dynamic>>().toList();
+      }
+    } catch (_) {}
+    return const [
+      {'urls': 'stun:stun.l.google.com:19302'},
+    ];
+  }
+
   Future<void> sampleServerTime() async {
     try {
       final start = timeSync.localNow();
       final request = await _httpClient
-          .getUrl(Uri.parse('http://$serverBase/timestamp'))
+          .getUrl(
+            Uri.parse('${_secure ? 'https' : 'http'}://$serverBase/timestamp'),
+          )
           .timeout(const Duration(seconds: 5));
       final response = await request.close();
       final body = await response.transform(utf8.decoder).join();

@@ -45,6 +45,9 @@ class WatchTogetherService {
   @visibleForTesting
   Future<void> tickForTesting() => _tick();
 
+  @visibleForTesting
+  void handleEventForTesting(WtEvent event) => _handleEvent(event);
+
   static const _hostLoopInterval = Duration(seconds: 2);
   static const _memberLoopInterval = Duration(milliseconds: 500);
 
@@ -59,6 +62,7 @@ class WatchTogetherService {
   final RxString myTempUser = ''.obs;
 
   StreamSubscription<WtEvent>? _eventSub;
+  StreamSubscription<WtConnectionState>? _connStateSub;
   StreamSubscription<void>? _statusSub;
   StreamSubscription<bool>? _playbackReqSub;
   Object? _statusIdentity;
@@ -66,8 +70,10 @@ class WatchTogetherService {
   bool _ticking = false;
   WtTarget? _currentTarget;
   bool _lastReportedLoading = false;
+  double _lastMemberReport = -double.infinity;
+  double _lastOtherHostToast = -double.infinity;
   final _memberCoordinator = WtMemberCoordinator();
-  bool debugOverlay = false;
+  final RxBool debugOverlay = false.obs;
 
   final RxList<WtDebugLog> debugLog = <WtDebugLog>[].obs;
 
@@ -83,7 +89,7 @@ class WatchTogetherService {
   }
 
   String get serverUrl =>
-      GStorage.setting.get('wtServerUrl') as String? ?? '127.0.0.1:9901';
+      GStorage.setting.get('wtServerUrl') as String? ?? 'wss://wt.raymor.top';
 
   double? get memberLastSeekDebug => _memberCoordinator.lastSeek;
 
@@ -121,6 +127,9 @@ class WatchTogetherService {
   }) async {
     await leave(silent: true);
     myTempUser.value = const Uuid().v4();
+    // Subscribe BEFORE joining: the joined snapshot can arrive within one
+    // RTT and a broadcast stream drops events with no listener.
+    _listen();
     try {
       await client.connect(
         serverBase: server ?? serverUrl,
@@ -132,12 +141,18 @@ class WatchTogetherService {
       SmartDialog.showToast('连接服务器失败');
       return;
     }
+    // Optimistic role; the server's joined.isHost / snapshot.isHost is
+    // authoritative and corrects this in _handleEvent.
     role.value = newRole;
     inRoom.value = true;
-    _listen();
+    client.join();
     _startLoop();
     call.attach(client);
     if (newRole.isHost) {
+      // Room creation piggybacks on the first update — sent immediately
+      // so members can join the code at once. The state is paused so an
+      // uncalibrated timestamp cannot skew member extrapolation; the
+      // guarded _hostUpdate overwrites it once a time sample lands.
       client.updatePlayback(
         WtPlaybackState(lastUpdateClientTime: client.timeSync.now()),
       );
@@ -146,6 +161,14 @@ class WatchTogetherService {
 
   void _listen() {
     _eventSub = client.events.listen(_handleEvent);
+    // A dropped socket invalidates every in-flight call signal — tear the
+    // call down instead of leaving both sides in mismatched states until
+    // the ICE timeout notices.
+    _connStateSub = client.connectionState.listen((state) {
+      if (state == WtConnectionState.disconnected) {
+        call.onDisconnected();
+      }
+    });
     _ensureStatusSub();
   }
 
@@ -186,6 +209,9 @@ class WatchTogetherService {
     if (_ticking) return;
     _ticking = true;
     try {
+      // Detect fake-alive sockets early (suspend/resume kills the
+      // connection long before the 30s ping timeout notices).
+      client.ensureAlive();
       if (role.value.isHost) {
         _ensureStatusSub();
         _hostTick();
@@ -199,16 +225,25 @@ class WatchTogetherService {
 
   void _hostTick() {
     final target = _detectTarget();
-    debugPrint('WT_TICK route=${Get.currentRoute} args=${Get.arguments.runtimeType} target=${target?.bvid ?? target?.roomId} current=${_currentTarget?.bvid}');
     if (target != null && _isDifferentTarget(target, _currentTarget)) {
-      _currentTarget = target;
-      client.navigate(target);
+      // Only record the target once the navigate actually went out — a
+      // send dropped mid-reconnect must be retried on the next tick.
+      if (client.navigate(target)) {
+        _currentTarget = target;
+      }
     }
     _hostUpdate();
+    // Host is also a member: keep its heartbeat/loading state fresh so it
+    // does not vanish from memberCount or block the loading barrier.
+    _memberHeartbeat();
   }
 
   void _hostUpdate() {
     if (!role.value.isHost || !inRoom.value) return;
+    // Broadcasting with a bare local clock poisons every member's
+    // extrapolation — hold updates until the first time sample lands
+    // (HTTP sample + tsync burst, normally <1s after connect).
+    if (!client.timeSync.hasValidSample) return;
     final state = _buildPlaybackState();
     if (state == null) return;
     client.updatePlayback(state);
@@ -274,6 +309,7 @@ class WatchTogetherService {
   }
 
   Future<void> _memberTick() async {
+    _memberHeartbeat();
     final snap = room.value;
     if (snap == null) return;
     if (!player.hasPlayer) {
@@ -292,14 +328,31 @@ class WatchTogetherService {
       player: player,
       reportLoading: _reportLoading,
       log: dbg,
+      canSeek: clock != null || client.timeSync.hasValidSample,
     );
+  }
+
+  /// Periodic member heartbeat (~2s, VT-aligned). Keeps server-side
+  /// membership/loading alive, reports the member's actual page target so
+  /// the server only counts members on the room's target, and clears a
+  /// stale isLoading=true even when the member tick exits early (no
+  /// player / live route), which would otherwise deadlock the room.
+  void _memberHeartbeat() {
+    if (!inRoom.value) return;
+    final now = clock?.call() ?? client.timeSync.now();
+    if (now - _lastMemberReport < 2.0) return;
+    _lastMemberReport = now;
+    final loading =
+        player.hasPlayer && !player.isLive && player.isBuffering;
+    _lastReportedLoading = loading;
+    client.updateMember(loading, target: _detectTarget());
   }
 
   void _reportLoading([bool? forced]) {
     final loading = forced ?? player.isBuffering;
     if (loading != _lastReportedLoading) {
       _lastReportedLoading = loading;
-      client.updateMember(loading);
+      client.updateMember(loading, target: _detectTarget());
     }
   }
 
@@ -308,30 +361,36 @@ class WatchTogetherService {
     switch (event) {
       case WtJoinedEvent():
         room.value = event.room;
+        _applyAuthoritativeRole(event.isHost);
+        // After a reconnect the server lost our transient flags — force
+        // the next heartbeat to re-report the current loading state.
+        _lastReportedLoading = false;
+        _lastMemberReport = -double.infinity;
         SmartDialog.showToast(event.isHost ? '房间已创建' : '已加入房间');
         if (role.value.isMember && event.room.playback.target != null) {
           _currentTarget = event.room.playback.target;
-          _executeNavigate(event.room.playback.target!);
+              _followNavigate(event.room.playback.target!);
         }
       case WtUpdateAckEvent():
         room.value = event.room;
+        _applyAuthoritativeRole(event.room.isHost);
+        _applyHostBarrier(event.room.waitForLoadding);
       case WtRoomUpdateEvent():
         room.value = event.room;
-        if (event.room.hostId == myTempUser.value && role.value.isMember) {
-          role.value = WtRole.host;
-          _startLoop();
-        }
+        _applyAuthoritativeRole(event.room.isHost);
+        _applyHostBarrier(event.room.waitForLoadding);
       case WtMemberUpdateEvent():
         _handleMemberUpdate(event);
       case WtNavigateEvent():
-        SmartDialog.showToast('正在跟随房主切换视频');
-        _executeNavigate(event.target);
+        if (_followNavigate(event.target)) {
+          SmartDialog.showToast('正在跟随房主切换视频');
+        }
       case WtPeerEvent():
         final snap = room.value;
         if (snap != null) {
           room.value = WtRoomSnapshot(
             name: snap.name,
-            hostId: snap.hostId,
+            isHost: snap.isHost,
             isProtected: snap.isProtected,
             memberCount: event.memberCount,
             waitForLoadding: snap.waitForLoadding,
@@ -354,9 +413,54 @@ class WatchTogetherService {
   }
 
   void _handleMemberUpdate(WtMemberUpdateEvent event) {
-    if (!role.value.isHost) return;
+    // Keep the member-side barrier fresh too: without this, members lag
+    // ~2s behind the host's pause while peers are buffering.
+    final snap = room.value;
+    if (snap != null &&
+        (snap.waitForLoadding != event.waitForLoadding ||
+            snap.memberCount != event.memberCount)) {
+      room.value = WtRoomSnapshot(
+        name: snap.name,
+        isHost: snap.isHost,
+        isProtected: snap.isProtected,
+        memberCount: event.memberCount,
+        waitForLoadding: event.waitForLoadding,
+        playback: snap.playback,
+      );
+    }
+    _applyHostBarrier(event.waitForLoadding);
+  }
+
+  /// The server is authoritative on host status. Promote/demote whenever
+  /// a snapshot disagrees with the optimistic local role.
+  void _applyAuthoritativeRole(bool isHost) {
+    if (isHost && !role.value.isHost) {
+      role.value = WtRole.host;
+      _startLoop();
+    } else if (!isHost && role.value.isHost) {
+      role.value = WtRole.member;
+      hostIntent.reset();
+      _startLoop();
+    }
+  }
+
+  /// Follow a host navigation only when it actually differs from the page
+  /// the member is already on — reconnects must not rebuild the player.
+  bool _followNavigate(WtTarget target) {
+    _currentTarget = target;
+    final current = _detectTarget();
+    if (current != null && !_isDifferentTarget(target, current)) {
+      dbg('NAV skip: already on target');
+      return false;
+    }
+    _executeNavigate(target);
+    return true;
+  }
+
+  void _applyHostBarrier(bool waiting) {
+    if (!role.value.isHost || !inRoom.value || !player.hasPlayer) return;
     final resume = hostIntent.updateBarrier(
-      waiting: event.waitForLoadding,
+      waiting: waiting,
       isPlaying: player.hasPlayer && player.isPlaying,
     );
     if (resume == false) {
@@ -367,14 +471,28 @@ class WatchTogetherService {
   }
 
   void _executeNavigate(WtTarget target) {
+    // When the member is sitting on the watch-together room page, push
+    // without replacing it — off:true would pop the room page and with it
+    // the call controls (mute/hang-up).
+    final off = Get.currentRoute != '/watchTogether';
     if (target.isLive) {
-      PageUtils.toLiveRoom(target.roomId, off: true);
-    } else {
+      PageUtils.toLiveRoom(target.roomId, off: off);
+    } else if (target.bvid != null) {
       PageUtils.toVideoPage(
         bvid: target.bvid,
         cid: target.cid ?? 0,
+        epId: target.epid,
+        seasonId: target.seasonId,
         title: target.title,
-        off: true,
+        off: off,
+      );
+    } else if (target.epid != null || target.seasonId != null) {
+      // PGC episode with no bvid: route through the ep/ss resolver
+      // instead of crashing on bv2av(null).
+      PageUtils.viewPgc(
+        epId: target.epid,
+        seasonId: target.seasonId,
+        off: off,
       );
     }
   }
@@ -386,7 +504,12 @@ class WatchTogetherService {
         if (role.value.isHost) {
           _currentTarget = null;
           _hostUpdate();
-          SmartDialog.showToast('房间已重建');
+          // A fresh createRoom hits room_not_exist on join before the
+          // first update auto-creates it — that path is expected, not a
+          // rebuild worth toasting about.
+          if (room.value != null) {
+            SmartDialog.showToast('房间已重建');
+          }
         } else {
           SmartDialog.showToast('房间已关闭或过期');
           leave(silent: true);
@@ -395,7 +518,20 @@ class WatchTogetherService {
         SmartDialog.showToast('房间密码错误');
         leave(silent: true);
       case 'other_host_syncing':
-        SmartDialog.showToast('已有其他房主在同步');
+        // We lost authority: stop acting as host instead of retrying the
+        // rejected update every 2s and spamming toasts.
+        if (role.value.isHost) {
+          role.value = WtRole.member;
+          hostIntent.reset();
+          _startLoop();
+          SmartDialog.showToast('已有其他房主在同步');
+        } else {
+          final now = client.timeSync.now();
+          if (now - _lastOtherHostToast > 10) {
+            _lastOtherHostToast = now;
+            SmartDialog.showToast('已有其他房主在同步');
+          }
+        }
       default:
         SmartDialog.showToast('一起看错误: $code');
     }
@@ -410,6 +546,8 @@ class WatchTogetherService {
     _loop?.cancel();
     _loop = null;
     await _eventSub?.cancel();
+    await _connStateSub?.cancel();
+    _connStateSub = null;
     await _statusSub?.cancel();
     _eventSub = null;
     _statusSub = null;
@@ -424,6 +562,8 @@ class WatchTogetherService {
     _currentTarget = null;
     hostIntent.reset();
     _lastReportedLoading = false;
+    _lastMemberReport = -double.infinity;
+    _lastOtherHostToast = -double.infinity;
     _memberCoordinator.reset();
     debugLog.clear();
     call.reset();
@@ -434,10 +574,11 @@ class WatchTogetherService {
 
   void navigateToCurrent() {
     if (!role.value.isHost) return;
-    final target = _detectTarget();
-    if (target != null) {
+    // The button lives on the room page where _detectTarget sees nothing —
+    // fall back to the last detected target (kept fresh by _hostTick).
+    final target = _detectTarget() ?? _currentTarget;
+    if (target != null && client.navigate(target)) {
       _currentTarget = target;
-      client.navigate(target);
     }
   }
 }

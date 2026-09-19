@@ -4,9 +4,6 @@ class WtTimeSync {
   double _offset = 0;
   double _minTrip = double.infinity;
 
-  static const _maxSamples = 8;
-  final List<double> _trips = [];
-
   double get offset => _offset;
   double get minTrip => _minTrip;
   bool get hasValidSample => _minTrip < double.infinity;
@@ -15,11 +12,11 @@ class WtTimeSync {
 
   double now() => localNow() + _offset;
 
+  /// [start] and [end] must be the same local clock (send/receive times);
+  /// [serverTimestamp] is the remote clock. Never mix the two domains.
   void updateIfNeeded(num serverTimestamp, num start, num end) {
     final trip = (end - start).toDouble();
     if (trip < 0) return;
-    _trips.add(trip);
-    if (_trips.length > _maxSamples) _trips.removeAt(0);
     if (trip >= _minTrip) return;
     _minTrip = trip;
     _offset = serverTimestamp - (start + end) / 2;
@@ -28,7 +25,6 @@ class WtTimeSync {
   void reset() {
     _offset = 0;
     _minTrip = double.infinity;
-    _trips.clear();
   }
 }
 
@@ -36,13 +32,19 @@ class WtPlaybackLogic {
   static const playingSeekThreshold = 1.0;
   static const pausedSeekThreshold = 0.1;
 
+  /// Extrapolated position, clamped to [0, duration] so clock skew can
+  /// never produce an out-of-range seek target.
   static double extrapolateCurrent(
     WtPlaybackState room,
     double nowSeconds,
   ) {
-    if (room.paused) return room.currentTime;
-    return room.currentTime +
-        (nowSeconds - room.lastUpdateClientTime) * room.playbackRate;
+    var t = room.currentTime;
+    if (!room.paused) {
+      t += (nowSeconds - room.lastUpdateClientTime) * room.playbackRate;
+    }
+    if (t < 0) return 0;
+    if (room.duration > 0 && t > room.duration) return room.duration;
+    return t;
   }
 
   /// Align to the host intent. A loading member must keep loading, while

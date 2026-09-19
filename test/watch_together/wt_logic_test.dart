@@ -192,7 +192,7 @@ void main() {
     test('WtRoomSnapshot flattens playback fields', () {
       final snap = WtRoomSnapshot.fromJson({
         'name': 'r1',
-        'hostId': 'h1',
+        'isHost': false,
         'protected': true,
         'memberCount': 2,
         'waitForLoadding': false,

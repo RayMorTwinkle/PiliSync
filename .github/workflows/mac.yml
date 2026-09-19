@@ -40,11 +40,11 @@ jobs:
       - name: Prepare Upload
         run: |
           npm install --global create-dmg
-          create-dmg build/macos/Build/Products/Release/PiliNara.app || true
+          create-dmg build/macos/Build/Products/Release/PiliSync.app || true
         continue-on-error: true
 
       - name: Rename DMG
-        run: mv PiliNara*.dmg PiliNara_macos_${{ env.version }}.dmg
+        run: mv PiliSync*.dmg PiliSync_macos_${{ env.version }}.dmg
 
       - name: Release
         if: ${{ github.event.inputs.tag != '' }}
@@ -54,11 +54,11 @@ jobs:
           name: ${{ github.event.inputs.tag }}
           target_commitish: ${{ github.sha }}
           files: |
-            PiliNara_macos_*.dmg
+            PiliSync_macos_*.dmg
 
       - name: Upload macos release
         uses: actions/upload-artifact@v7
         with:
           archive: false
           name: macOS-release
-          path: PiliNara_macos_*.dmg
+          path: PiliSync_macos_*.dmg

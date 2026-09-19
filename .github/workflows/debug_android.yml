@@ -70,7 +70,7 @@ jobs:
         run: |
           mkdir -p output
           if [ -f "build/app/outputs/flutter-apk/app-debug.apk" ]; then
-            mv "build/app/outputs/flutter-apk/app-debug.apk" "output/PiliNara_android_debug_all.apk"
+            mv "build/app/outputs/flutter-apk/app-debug.apk" "output/PiliSync_android_debug_all.apk"
           fi
         shell: bash
 
@@ -79,4 +79,4 @@ jobs:
         with:
           archive: false
           name: Android_Debug_APK
-          path: output/PiliNara_android_debug_all.apk
+          path: output/PiliSync_android_debug_all.apk
