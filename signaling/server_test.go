@@ -499,7 +499,7 @@ func TestICEServersRelaysCloudflare(t *testing.T) {
 		gotAuth = r.Header.Get("Authorization")
 		gotPath = r.URL.Path
 		w.Header().Set("Content-Type", "application/json")
-		_, _ = w.Write([]byte(`{"iceServers":{"urls":["turn:turn.cloudflare.com:3478?transport=udp","turns:turn.cloudflare.com:5349?transport=tcp"],"username":"u1","credential":"c1"}}`))
+		_, _ = w.Write([]byte(`{"iceServers":[{"urls":"stun:stun.cloudflare.com:3478"},{"urls":["turn:turn.cloudflare.com:3478?transport=udp","turns:turn.cloudflare.com:5349?transport=tcp"],"username":"u1","credential":"c1"}]}`))
 	})
 	upstream := httptest.NewServer(mux)
 
@@ -527,12 +527,15 @@ func TestICEServersRelaysCloudflare(t *testing.T) {
 		t.Fatalf("upstream path = %q", gotPath)
 	}
 	list := m["iceServers"].([]any)
-	first := list[0].(map[string]any)
-	if first["username"] != "u1" || first["credential"] != "c1" {
-		t.Fatalf("credentials not relayed: %v", first)
+	if len(list) != 2 {
+		t.Fatalf("expected 2 upstream entries relayed verbatim, got %v", list)
 	}
-	urls, ok := first["urls"].([]any)
+	turn := list[1].(map[string]any)
+	if turn["username"] != "u1" || turn["credential"] != "c1" {
+		t.Fatalf("credentials not relayed: %v", turn)
+	}
+	urls, ok := turn["urls"].([]any)
 	if !ok || len(urls) != 2 {
-		t.Fatalf("urls not relayed: %v", first["urls"])
+		t.Fatalf("urls not relayed: %v", turn["urls"])
 	}
 }
