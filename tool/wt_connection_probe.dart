@@ -7,7 +7,10 @@ import 'dart:io';
 import 'package:PiliPlus/services/watch_together/wt_models.dart';
 import 'package:PiliPlus/services/watch_together/wt_signaling_client.dart';
 
-Future<void> main() async {
+Future<void> main(List<String> args) async {
+  final serverBase = args.isNotEmpty
+      ? args.first
+      : (Platform.environment['WT_SERVER'] ?? '127.0.0.1:9901');
   final host = WtSignalingClient();
   final member = WtSignalingClient();
   final room = 'probe-${DateTime.now().microsecondsSinceEpoch}';
@@ -26,12 +29,12 @@ Future<void> main() async {
     exit(2);
   });
   try {
-    await host.connect(serverBase: '127.0.0.1:9901', room: room,
+    await host.connect(serverBase: serverBase, room: room,
         user: 'probe-host', pass: '');
     host.updatePlayback(WtPlaybackState(lastUpdateClientTime: host.timeSync.now()));
     await created.future;
     stdout.writeln(jsonEncode({'createdRoom': room}));
-    await member.connect(serverBase: '127.0.0.1:9901', room: room,
+    await member.connect(serverBase: serverBase, room: room,
         user: 'probe-member', pass: '');
     member.join();
     final response = await joined.future;
