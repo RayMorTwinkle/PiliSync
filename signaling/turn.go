@@ -1,7 +1,9 @@
 package main
 
 import (
+	"bytes"
 	"encoding/json"
+	"fmt"
 	"log"
 	"net/http"
 	"os"
@@ -82,10 +84,11 @@ func fetchICEServers() []map[string]any {
 // requestCloudflareICE calls the Cloudflare TURN credentials endpoint and
 // normalizes the response into a WebRTC iceServers array.
 func requestCloudflareICE() ([]map[string]any, error) {
+	payload, _ := json.Marshal(map[string]any{"ttl": turnCredTTLSecs})
 	req, err := http.NewRequest(
 		http.MethodPost,
 		turnAPIBase+"/v1/turn/keys/"+turnKeyID+"/credentials/generate-ice-servers",
-		nil,
+		bytes.NewReader(payload),
 	)
 	if err != nil {
 		return nil, err
@@ -97,31 +100,26 @@ func requestCloudflareICE() ([]map[string]any, error) {
 		return nil, err
 	}
 	defer resp.Body.Close()
+	if resp.StatusCode != http.StatusOK && resp.StatusCode != http.StatusCreated {
+		return nil, errStatus(resp.StatusCode)
+	}
+	// Upstream shape: {"iceServers":[{urls,username?,credential?}, ...]}.
+	// Forward each entry verbatim — Cloudflare may add fields over time.
 	var body struct {
-		ICEServers struct {
-			// passthrough: Cloudflare may send a string or an array, and
-			// WebRTC accepts both — forward verbatim.
-			URLs       json.RawMessage `json:"urls"`
-			Username   string          `json:"username"`
-			Credential string          `json:"credential"`
-		} `json:"iceServers"`
+		ICEServers []map[string]any `json:"iceServers"`
 	}
 	if err := json.NewDecoder(resp.Body).Decode(&body); err != nil {
 		return nil, err
 	}
-	if resp.StatusCode != http.StatusOK && resp.StatusCode != http.StatusCreated {
-		return nil, errStatus(resp.StatusCode)
-	}
-	if len(body.ICEServers.URLs) == 0 || body.ICEServers.Credential == "" {
+	if len(body.ICEServers) == 0 {
 		return nil, errStatus(-1)
 	}
-	return []map[string]any{
-		{
-			"urls":       body.ICEServers.URLs,
-			"username":   body.ICEServers.Username,
-			"credential": body.ICEServers.Credential,
-		},
-	}, nil
+	for _, s := range body.ICEServers {
+		if u, ok := s["urls"]; !ok || u == nil {
+			return nil, fmt.Errorf("iceServers entry missing urls")
+		}
+	}
+	return body.ICEServers, nil
 }
 
 type statusError int
