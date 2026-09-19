@@ -73,7 +73,7 @@ class _WatchTogetherPageState extends State<WatchTogetherPage> {
           controller: _serverCtrl,
           decoration: const InputDecoration(
             labelText: '信令服务器',
-            hintText: '127.0.0.1:9901',
+            hintText: 'wss://wt.raymor.top',
             border: OutlineInputBorder(),
           ),
         ),
@@ -203,7 +203,7 @@ class _WatchTogetherPageState extends State<WatchTogetherPage> {
   Widget _debugPanel(ThemeData theme) {
     final call = service.call;
     return Obx(() {
-      final open = service.debugOverlay;
+      final open = service.debugOverlay.value;
       return Card(
         child: Padding(
           padding: const EdgeInsets.all(12),
@@ -211,7 +211,7 @@ class _WatchTogetherPageState extends State<WatchTogetherPage> {
             crossAxisAlignment: CrossAxisAlignment.start,
             children: [
               InkWell(
-                onTap: () => service.debugOverlay = !open,
+                onTap: () => service.debugOverlay.value = !open,
                 child: Row(
                   children: [
                     const Icon(Icons.bug_report, size: 18),
@@ -276,9 +276,18 @@ class _WatchTogetherPageState extends State<WatchTogetherPage> {
         children: [
           if (callState == WtCallState.idle)
             OutlinedButton.icon(
-              onPressed: service.inRoom.value ? () => call.start('') : null,
+              // Voice calls are 1:1 only: "peer" resolves server-side to
+              // the sole other member, so the button requires exactly 2.
+              onPressed: service.inRoom.value &&
+                      (service.room.value?.memberCount ?? 0) == 2
+                  ? () => call.start('peer')
+                  : null,
               icon: const Icon(Icons.mic),
-              label: const Text('开启语音通话'),
+              label: Text(
+                (service.room.value?.memberCount ?? 0) == 2
+                    ? '开启语音通话'
+                    : '语音通话（仅限双人房间）',
+              ),
             )
           else ...[
             Text(

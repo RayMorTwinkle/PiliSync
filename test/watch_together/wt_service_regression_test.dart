@@ -8,11 +8,61 @@ import 'wt_member_coordinator_test.dart' show FakePlayer;
 class RecordingSignaling extends WtSignalingClient {
   final loadingReports = <bool>[];
   @override
-  void updateMember(bool isLoading) => loadingReports.add(isLoading);
+  bool updateMember(bool isLoading, {WtTarget? target}) {
+    loadingReports.add(isLoading);
+    return true;
+  }
 }
 
 void main() {
   TestWidgetsFlutterBinding.ensureInitialized();
+
+  test('authoritative ack releases barrier after loading member leaves', () async {
+    final player = FakePlayer()..isPlaying = true;
+    final client = RecordingSignaling();
+    addTearDown(client.dispose);
+    final service = WatchTogetherService.forTesting(
+      player: player, client: client, clock: () => 100,
+    );
+    service.role.value = WtRole.host;
+    service.inRoom.value = true;
+    service.handleEventForTesting(const WtMemberUpdateEvent('member', true, true, 2));
+    await Future<void>.delayed(Duration.zero);
+    expect(player.isPlaying, isFalse);
+    service.handleEventForTesting(const WtUpdateAckEvent(
+      WtRoomSnapshot(name: 'test', isHost: true, isProtected: false,
+        memberCount: 1, waitForLoadding: false,
+        playback: WtPlaybackState(paused: false, currentTime: 308)), 100,
+    ));
+    await Future<void>.delayed(Duration.zero);
+    expect(player.isPlaying, isTrue);
+    expect(player.commands, ['pause', 'play']);
+    service.handleEventForTesting(WtUpdateAckEvent(service.room.value!, 101));
+    await Future<void>.delayed(Duration.zero);
+    expect(player.commands, ['pause', 'play']);
+  });
+
+  test('barrier release snapshot respects explicit host pause', () async {
+    final player = FakePlayer()..isPlaying = true;
+    final client = RecordingSignaling();
+    addTearDown(client.dispose);
+    final service = WatchTogetherService.forTesting(
+      player: player, client: client, clock: () => 100,
+    );
+    service.role.value = WtRole.host;
+    service.inRoom.value = true;
+    service.handleEventForTesting(const WtMemberUpdateEvent('member', true, true, 2));
+    await Future<void>.delayed(Duration.zero);
+    service.hostIntent.onPlaybackRequest(false);
+    service.handleEventForTesting(const WtUpdateAckEvent(
+      WtRoomSnapshot(name: 'test', isHost: true, isProtected: false,
+        memberCount: 1, waitForLoadding: false,
+        playback: WtPlaybackState(paused: true, currentTime: 308)), 100,
+    ));
+    await Future<void>.delayed(Duration.zero);
+    expect(player.isPlaying, isFalse);
+    expect(player.commands, ['pause']);
+  });
 
   test('service resumes member after paused seek and does not freeze at target', () async {
     final player = FakePlayer();
@@ -28,7 +78,7 @@ void main() {
     service.inRoom.value = true;
     void room(bool paused) {
       service.room.value = WtRoomSnapshot(
-        name: 'test', hostId: 'host', isProtected: false, memberCount: 2,
+        name: 'test', isHost: false, isProtected: false, memberCount: 2,
         waitForLoadding: false,
         playback: WtPlaybackState(
           paused: paused, currentTime: 10, duration: 120,

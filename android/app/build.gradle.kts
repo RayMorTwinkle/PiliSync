@@ -84,7 +84,7 @@ android {
                 resValue(
                     type = "string",
                     name = "app_name",
-                    value = "PiliNara wt",
+                    value = "PiliSync wt",
                 )
             }
         }

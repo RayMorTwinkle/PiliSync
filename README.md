@@ -5,7 +5,7 @@
 
 
 <div align="center">
-    <h1>PiliNara</h1>
+    <h1>PiliSync</h1>
 <div align="center">
     
 </div>
@@ -23,9 +23,9 @@
 <br/>
 
 ## 项目说明
-- 本项目PiliNara是基于[PiliPlus](https://github.com/bggRGjQaUbCoE/PiliPlus)进行修改的,做了一些自用的改动.
-- 本仓库保留了PiliPlus的所有功能,并在此基础上进行了部分自用的优化和调整.支持导入PiliPlus的设置和数据，也应该支持了导出设置和数据到PiliPlus.
-- 本项目会定期同步PiliPlus的更新,并在此基础上进行修改和优化.
+- 本项目PiliSync基于[PiliNara](https://github.com/Starfallan/PiliNara)（上游为[PiliPlus](https://github.com/bggRGjQaUbCoE/PiliPlus)）的个人 fork.
+- 核心新增：「一起看」（Watch Together）——多人实时同步观影 + WebRTC 语音通话，含 Go 信令服务端（`signaling/`），协议语义对齐 VideoTogether.
+- 本仓库保留了上游的所有功能，并在此基础上进行了部分自用的优化和调整.
 - 本项目仅供个人学习和测试使用，目前只打包了安卓版本,如有需要请自行Fork后编译.
 - 有啥需要的功能或者想法欢迎提issue或者PR,我会尽量抽时间进行开发和完善.
 - 本人开发水平有限，可能存在一些bug和不完善的地方，欢迎提交issue和PR.
@@ -37,7 +37,8 @@
 Fork特性：
 
 **基础适配与界面**
-- [x] 应用名称由PiliPlus更改为PiliNara，做了各平台相应替换以实现共存
+- [x] 「一起看」功能：房间制同步观影（房主广播播放态、成员外推校准、缓冲互等屏障）+ 双人语音通话 + Cloudflare TURN 中继
+- [x] 应用名称由上游更改为PiliSync，做了各平台相应替换以实现共存
 - [x] 修复Flutter在澎湃小窗下无法正常显示的问题，参考Flutter官方issue [#161086](https://github.com/flutter/flutter/issues/161086)，该问题似乎在HyperOS3上被修复
    修复方案参考了[venera/pull/467](https://github.com/venera-app/venera/pull/467)
 - [x] 支持自定义「我的」页面卡片顺序和显示数量
@@ -101,8 +102,6 @@ Fork特性：
 - [x] Pad
 - [x] Windows
 - [x] Linux
-
-[![Packaging status](https://repology.org/badge/vertical-allrepos/pilinara.svg)](https://repology.org/project/pilinara/versions)
 
 ## refactor
 
@@ -283,32 +282,16 @@ Fork特性：
 
 可以通过右侧release进行下载或拉取代码到本地进行编译
 
-### Arch Linux (AUR)
-
-Arch Linux 用户可通过 AUR 安装：
-
-- `pilinara`（源码构建）
-- `pilinara-bin`（官方 Release 二进制）
-
-```bash
-# 使用 paru 安装二进制版
-paru -S pilinara-bin
-```
-
-```bash
-# 使用 yay 安装二进制版
-yay -S pilinara-bin
-```
-
 <br/>
 
 ## 声明
 
-此项目（PiliNara）是个人为了兴趣而开发，仅用于学习和测试，请于下载后24小时内删除。
+此项目（PiliSync）是个人为了兴趣而开发，仅用于学习和测试，请于下载后24小时内删除。
 所用API皆从官方网站收集，不提供任何破解内容。
 在此致敬原作者：[guozhigq/pilipala](https://github.com/guozhigq/pilipala)
 在此致敬上游作者：[orz12/PiliPalaX](https://github.com/orz12/PiliPalaX)
 在此致敬上游作者：[bggRGjQaUbCoE/PiliPlus](https://github.com/bggRGjQaUbCoE/PiliPlus)
+在此致敬上游作者：[Starfallan/PiliNara](https://github.com/Starfallan/PiliNara)
 本仓库做了一些自用修改，感谢原作者的开源精神。
 
 感谢使用

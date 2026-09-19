@@ -154,6 +154,9 @@ test.dart
 docs/*
 !docs/danmaku_font_scaling.md
 !docs/inapp_pip_implementation.md
+!docs/local-dev-notes.md
+!docs/spec/
+!docs/spec/**
 test*.dart
 
 AGENTS.md
@@ -171,3 +174,12 @@ test*
 /pubspec_overrides.yaml
 .mindfs
 signaling/signaling-server
+
+# Secrets — never commit credentials or environment files
+.env
+.env.*
+!.env.example
+*.pem
+*.key
+**/secrets*.json
+**/credentials*.json

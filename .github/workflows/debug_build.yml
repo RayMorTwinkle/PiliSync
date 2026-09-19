@@ -60,14 +60,14 @@ jobs:
         shell: bash
         run: |
           mkdir -p output
-          mv build/app/outputs/flutter-apk/app-debug.apk "output/PiliNara_android_${{ env.version }}_debug.apk"
+          mv build/app/outputs/flutter-apk/app-debug.apk "output/PiliSync_android_${{ env.version }}_debug.apk"
 
       - name: Upload Android debug APK
         uses: actions/upload-artifact@v7
         with:
           archive: false
           name: Android-debug-apk
-          path: output/PiliNara_android_*_debug.apk
+          path: output/PiliSync_android_*_debug.apk
 
   win_x64_debug:
     if: ${{ inputs.build_win_x64 }}
@@ -102,13 +102,13 @@ jobs:
       - name: Prepare Upload
         shell: pwsh
         run: |
-          New-Item -ItemType Directory -Force -Path "PiliNara-Windows-Debug"
-          Copy-Item -Recurse -Force "build/windows/x64/runner/Debug/*" "PiliNara-Windows-Debug/"
-          Compress-Archive -Path "PiliNara-Windows-Debug" -DestinationPath "PiliNara_windows_${{ env.version }}_x64_debug.zip" -Force
+          New-Item -ItemType Directory -Force -Path "PiliSync-Windows-Debug"
+          Copy-Item -Recurse -Force "build/windows/x64/runner/Debug/*" "PiliSync-Windows-Debug/"
+          Compress-Archive -Path "PiliSync-Windows-Debug" -DestinationPath "PiliSync_windows_${{ env.version }}_x64_debug.zip" -Force
 
       - name: Upload Windows debug package
         uses: actions/upload-artifact@v7
         with:
           archive: false
           name: Windows-x64-debug
-          path: PiliNara_windows_*_x64_debug.zip
+          path: PiliSync_windows_*_x64_debug.zip

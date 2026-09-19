@@ -20,8 +20,12 @@ class WtDebugServer {
   static Future<void> start() async {
     if (_server != null) return;
     try {
+      // Loopback only: this control plane can seek/navigate/join rooms
+      // with a password in the query — it must not be reachable from the
+      // LAN on a debug build running on a real device. Use `adb forward`
+      // for remote debugging.
       _server = await HttpServer.bind(
-        InternetAddress.anyIPv4,
+        InternetAddress.loopbackIPv4,
         port,
         shared: true,
       );

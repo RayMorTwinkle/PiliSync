@@ -109,7 +109,9 @@ class WtPlaybackState {
 
 class WtRoomSnapshot {
   final String name;
-  final String hostId;
+  // The server never sends the host uuid (it is a write capability);
+  // "isHost" is filled per-recipient by the server.
+  final bool isHost;
   final bool isProtected;
   final int memberCount;
   final bool waitForLoadding;
@@ -117,7 +119,7 @@ class WtRoomSnapshot {
 
   const WtRoomSnapshot({
     required this.name,
-    required this.hostId,
+    required this.isHost,
     required this.isProtected,
     required this.memberCount,
     required this.waitForLoadding,
@@ -128,7 +130,7 @@ class WtRoomSnapshot {
     final playbackJson = <String, dynamic>{...json};
     return WtRoomSnapshot(
       name: json['name'] as String? ?? '',
-      hostId: json['hostId'] as String? ?? '',
+      isHost: json['isHost'] as bool? ?? false,
       isProtected: json['protected'] as bool? ?? false,
       memberCount: (json['memberCount'] as num?)?.toInt() ?? 0,
       waitForLoadding: json['waitForLoadding'] as bool? ?? false,

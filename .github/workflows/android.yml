@@ -102,7 +102,7 @@ jobs:
               run: |
                   for file in build/app/outputs/flutter-apk/app-*-release.apk; do
                     abi=$(echo "$file" | sed -E 's|.*app-(.*)-release\.apk|\1|')
-                    mv "$file" "PiliNara_android_${{ env.version }}_${abi}.apk"
+                    mv "$file" "PiliSync_android_${{ env.version }}_${abi}.apk"
                   done
               shell: bash
 
@@ -114,25 +114,25 @@ jobs:
                   name: ${{ github.event.inputs.tag }}
                   target_commitish: ${{ github.sha }}
                   files: |
-                      PiliNara_android_*.apk
+                      PiliSync_android_*.apk
 
             - name: 上传
               uses: actions/upload-artifact@v7
               with:
                   archive: false
                   name: Android_arm64-v8a
-                  path: PiliNara_android_*_arm64-v8a.apk
+                  path: PiliSync_android_*_arm64-v8a.apk
 
             - name: 上传
               uses: actions/upload-artifact@v7
               with:
                   archive: false
                   name: Android_armeabi-v7a
-                  path: PiliNara_android_*_armeabi-v7a.apk
+                  path: PiliSync_android_*_armeabi-v7a.apk
 
             - name: 上传
               uses: actions/upload-artifact@v7
               with:
                   archive: false
                   name: Android_x86_64
-                  path: PiliNara_android_*_x86_64.apk
+                  path: PiliSync_android_*_x86_64.apk

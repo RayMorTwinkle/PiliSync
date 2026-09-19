@@ -50,14 +50,14 @@ jobs:
 
       - name: Prepare Upload
         run: |
-          mkdir -p Release/PiliNara-Win
-          mkdir -p PiliNara-Win-Setup
-          mv build/windows/x64/runner/Release/* Release/PiliNara-Win/
-          mv dist/**/*.exe PiliNara-Win-Setup/PiliNara_windows_${{env.version}}_x64_setup.exe
+          mkdir -p Release/PiliSync-Win
+          mkdir -p PiliSync-Win-Setup
+          mv build/windows/x64/runner/Release/* Release/PiliSync-Win/
+          mv dist/**/*.exe PiliSync-Win-Setup/PiliSync_windows_${{env.version}}_x64_setup.exe
 
       - name: Compress
         run: |
-          Compress-Archive -Path "Release/PiliNara-Win" -DestinationPath "PiliNara_windows_${{env.version}}_x64_portable.zip"
+          Compress-Archive -Path "Release/PiliSync-Win" -DestinationPath "PiliSync_windows_${{env.version}}_x64_portable.zip"
         shell: pwsh
 
       - name: Release
@@ -68,19 +68,19 @@ jobs:
           name: ${{ github.event.inputs.tag }}
           target_commitish: ${{ github.sha }}
           files: |
-            PiliNara_windows_*.zip
-            PiliNara-Win-Setup/PiliNara_windows_*.exe
+            PiliSync_windows_*.zip
+            PiliSync-Win-Setup/PiliSync_windows_*.exe
 
       - name: Upload windows file release
         uses: actions/upload-artifact@v7
         with:
           archive: false
           name: Windows-file-x64-release
-          path: PiliNara_windows_*.zip
+          path: PiliSync_windows_*.zip
 
       - name: Upload windows setup release
         uses: actions/upload-artifact@v7
         with:
           archive: false
           name: Windows-setup-x64-release
-          path: PiliNara-Win-Setup/PiliNara_windows_*.exe
+          path: PiliSync-Win-Setup/PiliSync_windows_*.exe

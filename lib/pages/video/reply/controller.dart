@@ -48,7 +48,7 @@ class VideoReplyController extends ReplyController<MainListReply>
   void onClose() {
     if (kDebugMode) {
       print(
-        '[PiliNara] VideoReplyController onClose called, isEnteringPip: $isEnteringPip',
+        '[PiliSync] VideoReplyController onClose called, isEnteringPip: $isEnteringPip',
       );
     }
     if (isEnteringPip) {
