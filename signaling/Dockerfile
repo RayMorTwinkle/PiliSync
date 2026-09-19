@@ -3,6 +3,9 @@
 # ServerX 部署走 ServerX/pilisync/（compose 以 git 上下文引本目录）
 
 FROM golang:alpine AS build
+# 部署目标在国内：默认走 goproxy.cn；海外构建可用 --build-arg GOPROXY=... 覆盖
+ARG GOPROXY=https://goproxy.cn,direct
+ENV GOPROXY=${GOPROXY}
 WORKDIR /src
 COPY go.mod go.sum ./
 RUN go mod download
