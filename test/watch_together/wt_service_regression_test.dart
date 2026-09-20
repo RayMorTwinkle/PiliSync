@@ -91,6 +91,13 @@ void main() {
       ),
     );
 
+    // F11-b dwell: the first tick only STARTS the sustained-buffering
+    // window — a transient underrun must not pause the whole room.
+    await service.tickForTesting();
+    expect(client.loadingReports.last, isFalse);
+
+    // Dwell elapsed (>1.5s of continuous buffering): reports loading.
+    now += 3;
     await service.tickForTesting();
     expect(client.loadingReports.last, isTrue);
 
@@ -100,16 +107,21 @@ void main() {
     expect(client.loadingReports.last, isTrue);
 
     // Past the 20s cap (heartbeat needs >=2s between reports).
-    now += 12; // total 22s of continuous buffering
+    now += 12; // total ~22s of reported loading
     await service.tickForTesting();
     expect(client.loadingReports.last, isFalse,
         reason: 'reports=${client.loadingReports}');
 
-    // Buffering clears then restarts: a fresh run gets a fresh window.
+    // Buffering clears then restarts: a fresh run gets a fresh window —
+    // but only after the dwell confirms it again.
     player.isBuffering = false;
     now += 3;
     await service.tickForTesting();
     player.isBuffering = true;
+    now += 3;
+    await service.tickForTesting();
+    expect(client.loadingReports.last, isFalse,
+        reason: 'reports=${client.loadingReports}');
     now += 3;
     await service.tickForTesting();
     expect(client.loadingReports.last, isTrue,

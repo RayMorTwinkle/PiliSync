@@ -15,14 +15,18 @@ import (
 )
 
 const (
-	writeWait  = 10 * time.Second
-	pongWait   = 60 * time.Second
+	writeWait = 10 * time.Second
+	// pongWait gives a 66s margin over pingPeriod: a 6s margin kicked
+	// clients whenever inbound latency queued a pong behind congestion —
+	// exactly when a struggling member is most likely to stay connected.
+	pongWait   = 120 * time.Second
 	pingPeriod = 54 * time.Second
 
-	maxChatRunes = 500
-	maxRooms     = 10000
-	maxClients   = 5000
-	maxPerIP     = 50
+	maxChatRunes      = 500
+	maxRooms          = 10000
+	maxClients        = 5000
+	maxPerIP          = 50
+	maxMembersPerRoom = 32
 
 	// inbound rate limit per connection (token bucket)
 	msgRate  = 10.0 // messages per second
@@ -305,6 +309,10 @@ func (h *Hub) handleJoin(c *Client, msg *Incoming) {
 		})
 		return
 	}
+	if !room.hasMember(msg.TempUser) && room.memberCount() >= maxMembersPerRoom {
+		c.sendJSON(map[string]any{"type": "error", "code": "room_full"})
+		return
+	}
 	room.upsertMember(msg.TempUser)
 	isHost := room.IsHost(msg.TempUser)
 
@@ -323,9 +331,10 @@ func (h *Hub) handleJoin(c *Client, msg *Incoming) {
 		"isHost":    isHost,
 	})
 	h.broadcast(msg.Room, map[string]any{
-		"type":        "peer_joined",
-		"tempUser":    msg.TempUser,
-		"memberCount": room.memberCount(),
+		"type":            "peer_joined",
+		"tempUser":        msg.TempUser,
+		"memberCount":     room.memberCount(),
+		"waitForLoadding": room.anyoneLoading(),
 	}, c)
 	log.Printf("[join] room=%s user=%s host=%v", msg.Room, msg.TempUser, isHost)
 }
@@ -421,21 +430,27 @@ func (h *Hub) handleUpdateMember(c *Client, msg *Incoming) {
 		c.sendJSON(map[string]any{"type": "error", "code": "missing_isLoading"})
 		return
 	}
-	if !room.setLoading(msg.TempUser, *msg.IsLoading, msg.Target) {
+	ok, changed := room.setLoading(msg.TempUser, *msg.IsLoading, msg.Target)
+	if !ok {
 		c.sendJSON(map[string]any{"type": "error", "code": "not_in_room"})
 		return
 	}
 
-	// broadcast to everyone including the sender (VT-style): the echo
-	// doubles as the sender's ack and carries its `t` for time sampling.
-	h.broadcast(msg.Room, map[string]any{
+	payload := map[string]any{
 		"type":            "member_update",
 		"tempUser":        msg.TempUser,
 		"isLoading":       *msg.IsLoading,
 		"waitForLoadding": room.anyoneLoading(),
 		"memberCount":     room.memberCount(),
 		"t":               msg.T,
-	}, nil)
+	}
+	// Unchanged heartbeats only echo the sender (the `t` echo feeds its
+	// time sampling); fan-out happens only when the published state moved.
+	if changed {
+		h.broadcast(msg.Room, payload, nil)
+	} else {
+		c.sendJSON(payload)
+	}
 }
 
 func (h *Hub) handleNavigate(c *Client, msg *Incoming) {
@@ -460,9 +475,10 @@ func (h *Hub) handleNavigate(c *Client, msg *Incoming) {
 	room.setTargetLocked(msg.Target)
 	room.mu.Unlock()
 	h.broadcast(msg.Room, map[string]any{
-		"type":   "navigate",
-		"from":   msg.TempUser,
-		"target": msg.Target,
+		"type":            "navigate",
+		"from":            msg.TempUser,
+		"target":          msg.Target,
+		"waitForLoadding": room.anyoneLoading(),
 	}, c)
 	log.Printf("[navigate] room=%s target=%+v", room.Name, *msg.Target)
 }
@@ -555,6 +571,9 @@ func (h *Hub) readPump(c *Client) {
 		if err != nil {
 			return
 		}
+		// Any inbound frame proves liveness, not just pongs — a busy
+		// client whose pongs get lost must not be kicked mid-traffic.
+		_ = c.conn.SetReadDeadline(time.Now().Add(pongWait))
 		if !c.allowMsg() {
 			log.Printf("[ratelimit] disconnecting %s", c.ip)
 			return
@@ -628,11 +647,25 @@ func (h *Hub) disconnect(c *Client) {
 
 	if room != nil && tempUser != "" && !stillBound {
 		room.removeMember(tempUser)
+		// Host departure used to freeze the room until the 3min expiry —
+		// members never send `update` so nobody could take over. Hand the
+		// host to the earliest-joined online member; the client's
+		// authoritative-role path promotes it on the next snapshot.
+		if room.IsHost(tempUser) {
+			room.mu.Lock()
+			newHost := room.transferHostLocked()
+			room.mu.Unlock()
+			if newHost != "" {
+				log.Printf("[host] handover room=%s %s -> %s", roomName, tempUser, newHost)
+			}
+		}
 		h.broadcast(roomName, map[string]any{
-			"type":        "peer_left",
-			"tempUser":    tempUser,
-			"memberCount": room.memberCount(),
+			"type":            "peer_left",
+			"tempUser":        tempUser,
+			"memberCount":     room.memberCount(),
+			"waitForLoadding": room.anyoneLoading(),
 		}, nil)
+		h.broadcastRoom(room, nil)
 	}
 	_ = c.conn.Close()
 	log.Printf("[leave] room=%s user=%s", roomName, tempUser)

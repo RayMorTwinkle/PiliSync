@@ -34,6 +34,9 @@ jobs:
         shell: pwsh
         run: lib/scripts/patch.ps1 macOS
 
+      - name: Disable SwiftPM
+        run: flutter config --no-enable-swift-package-manager
+
       - name: Build Mac
         run: flutter build macos --release --dart-define-from-file=pili_release.json --no-pub
 

@@ -80,6 +80,10 @@ class VirtualPlayer implements WtPlayerAdapter {
   @override
   StreamSubscription<void> onStatusChanged(void Function(bool) cb) =>
       const Stream<void>.empty().listen(null);
+
+  @override
+  StreamSubscription<bool> onBufferingChanged(void Function(bool) cb) =>
+      const Stream<bool>.empty().listen(null);
 }
 
 Future<void> main(List<String> args) async {

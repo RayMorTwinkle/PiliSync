@@ -20,7 +20,7 @@ func startTestServer(t *testing.T) *httptest.Server {
 }
 
 func startTestServerWithExpiry(t *testing.T, expire, interval time.Duration) *httptest.Server {
-	rooms := newRoomStore(nil, expire, interval)
+	rooms := newRoomStore(nil, expire, interval, maxMemberLoadingWait)
 	hub := NewHub(rooms)
 	mux := setupMux(rooms, hub)
 	return httptest.NewServer(mux)
@@ -157,11 +157,13 @@ func TestFullFlow(t *testing.T) {
 		t.Fatalf("hostId must not be broadcast: %v", room)
 	}
 
-	// 4. member reports loading -> everyone (incl. sender) notified
+	// 4. member reports loading -> everyone (incl. sender) notified.
+	// F11-k: a nil target no longer counts toward the barrier, so the
+	// member must report its target (room target is nil -> lenient).
 	isLoading := true
 	send(member, map[string]any{
 		"type": "update_member", "room": "r1", "password": "pw1", "tempUser": "memB",
-		"isLoading": isLoading, "t": 123.0,
+		"isLoading": isLoading, "t": 123.0, "target": videoTarget,
 	})
 	mu := waitFor(t, host, "member_update", 2*time.Second)
 	if mu["waitForLoadding"] != true {
@@ -542,6 +544,27 @@ func TestICEServersRelaysCloudflare(t *testing.T) {
 
 // A member that reports isLoading forever must not deadlock the room: the
 // barrier only honours a loading flag younger than maxMemberLoadingWait.
+var videoTarget = map[string]any{"type": "video", "bvid": "BV1test", "cid": 100}
+
+// updateMsgWithTarget is updateMsg plus a playback.target so the room has
+// a current page members can match.
+func updateMsgWithTarget(room, pass, user string, t float64) map[string]any {
+	m := updateMsg(room, pass, user, t)
+	m["playback"].(map[string]any)["target"] = videoTarget
+	return m
+}
+
+func memberLoadingMsg(room, pass, user string, loading bool, withTarget bool) map[string]any {
+	m := map[string]any{
+		"type": "update_member", "room": room, "password": pass, "tempUser": user,
+		"isLoading": loading,
+	}
+	if withTarget {
+		m["target"] = videoTarget
+	}
+	return m
+}
+
 func TestLoadingWaitExpires(t *testing.T) {
 	defer func(orig time.Duration) { maxMemberLoadingWait = orig }(maxMemberLoadingWait)
 	maxMemberLoadingWait = 80 * time.Millisecond
@@ -553,16 +576,14 @@ func TestLoadingWaitExpires(t *testing.T) {
 	member := dial(t, srv)
 	defer member.Close()
 
-	send(host, updateMsg("r1", "pw1", "hostA", 10))
+	send(host, updateMsgWithTarget("r1", "pw1", "hostA", 10))
 	waitFor(t, host, "update_ack", 2*time.Second)
 	send(member, map[string]any{"type": "join", "room": "r1", "password": "pw1", "tempUser": "memB"})
 	waitFor(t, member, "joined", 2*time.Second)
 	waitFor(t, host, "peer_joined", 2*time.Second)
 
-	send(member, map[string]any{
-		"type": "update_member", "room": "r1", "password": "pw1", "tempUser": "memB",
-		"isLoading": true,
-	})
+	// F11-k: loading only counts when the member reports the room target.
+	send(member, memberLoadingMsg("r1", "pw1", "memB", true, true))
 	if mu := waitFor(t, host, "member_update", 2*time.Second); mu["waitForLoadding"] != true {
 		t.Fatalf("fresh loading should hold the barrier")
 	}
@@ -572,27 +593,204 @@ func TestLoadingWaitExpires(t *testing.T) {
 
 	// Re-sending the same flag is not a false→true transition, so
 	// LoadingSince is not refreshed: the stale flag must now be ignored.
-	send(member, map[string]any{
-		"type": "update_member", "room": "r1", "password": "pw1", "tempUser": "memB",
-		"isLoading": true,
-	})
-	if mu := waitFor(t, host, "member_update", 2*time.Second); mu["waitForLoadding"] != false {
-		t.Fatalf("stale loading must release the barrier")
+	// It is also an unchanged heartbeat (dedup): only the sender echoes,
+	// so the host learns the release from the next update_ack instead.
+	send(member, memberLoadingMsg("r1", "pw1", "memB", true, true))
+	_ = waitFor(t, member, "member_update", 2*time.Second) // sender echo
+	send(host, updateMsgWithTarget("r1", "pw1", "hostA", 11))
+	if ack := waitFor(t, host, "update_ack", 2*time.Second); ack["room"].(map[string]any)["waitForLoadding"] != false {
+		t.Fatalf("stale loading must release the barrier, got %v", ack["room"])
 	}
-	_ = waitFor(t, member, "member_update", 2*time.Second)
 
 	// A genuine false→true transition starts a fresh window.
-	send(member, map[string]any{
-		"type": "update_member", "room": "r1", "password": "pw1", "tempUser": "memB",
-		"isLoading": false,
-	})
+	send(member, memberLoadingMsg("r1", "pw1", "memB", false, true))
 	_ = waitFor(t, host, "member_update", 2*time.Second)
 	_ = waitFor(t, member, "member_update", 2*time.Second)
-	send(member, map[string]any{
-		"type": "update_member", "room": "r1", "password": "pw1", "tempUser": "memB",
-		"isLoading": true,
-	})
+	send(member, memberLoadingMsg("r1", "pw1", "memB", true, true))
 	if mu := waitFor(t, host, "member_update", 2*time.Second); mu["waitForLoadding"] != true {
 		t.Fatalf("a new loading run should re-hold the barrier")
+	}
+}
+
+// F11-k: a member whose heartbeat carries no target (off the video page)
+// must not hold the room barrier — regression for spec F2 compliance.
+func TestLoadingWithoutTargetIgnored(t *testing.T) {
+	srv := startTestServer(t)
+	defer srv.Close()
+
+	host := dial(t, srv)
+	defer host.Close()
+	member := dial(t, srv)
+	defer member.Close()
+
+	send(host, updateMsgWithTarget("r1", "pw1", "hostA", 10))
+	waitFor(t, host, "update_ack", 2*time.Second)
+	send(member, map[string]any{"type": "join", "room": "r1", "password": "pw1", "tempUser": "memB"})
+	waitFor(t, member, "joined", 2*time.Second)
+	waitFor(t, host, "peer_joined", 2*time.Second)
+
+	send(member, memberLoadingMsg("r1", "pw1", "memB", true, false))
+	// changed → broadcast to all including host
+	if mu := waitFor(t, host, "member_update", 2*time.Second); mu["waitForLoadding"] != false {
+		t.Fatalf("target-less member loading must not raise the barrier")
+	}
+}
+
+// F11-l: end-of-video exemption uses tolerance, not float equality.
+func TestLoadingNearEndIgnored(t *testing.T) {
+	srv := startTestServer(t)
+	defer srv.Close()
+
+	host := dial(t, srv)
+	defer host.Close()
+	member := dial(t, srv)
+	defer member.Close()
+
+	up := updateMsgWithTarget("r1", "pw1", "hostA", 10)
+	up["playback"].(map[string]any)["currentTime"] = 99.9 // duration=100
+	send(host, up)
+	waitFor(t, host, "update_ack", 2*time.Second)
+	send(member, map[string]any{"type": "join", "room": "r1", "password": "pw1", "tempUser": "memB"})
+	waitFor(t, member, "joined", 2*time.Second)
+	waitFor(t, host, "peer_joined", 2*time.Second)
+
+	send(member, memberLoadingMsg("r1", "pw1", "memB", true, true))
+	if mu := waitFor(t, host, "member_update", 2*time.Second); mu["waitForLoadding"] != false {
+		t.Fatalf("tail buffering must not hold the barrier")
+	}
+}
+
+// F11-i: when the host disconnects the earliest online member inherits
+// HostId; the next broadcastRoom snapshot promotes it client-side.
+func TestHostHandoverOnDisconnect(t *testing.T) {
+	srv := startTestServer(t)
+	defer srv.Close()
+
+	host := dial(t, srv)
+	member := dial(t, srv)
+	defer member.Close()
+
+	send(host, updateMsgWithTarget("r1", "pw1", "hostA", 10))
+	waitFor(t, host, "update_ack", 2*time.Second)
+	send(member, map[string]any{"type": "join", "room": "r1", "password": "pw1", "tempUser": "memB"})
+	waitFor(t, member, "joined", 2*time.Second)
+	waitFor(t, host, "peer_joined", 2*time.Second)
+
+	_ = host.Close()
+
+	// The member gets peer_left then a room snapshot with isHost=true.
+	waitFor(t, member, "peer_left", 2*time.Second)
+	snap := waitFor(t, member, "room", 2*time.Second)
+	if snap["room"].(map[string]any)["isHost"] != true {
+		t.Fatalf("member should inherit host, got %v", snap)
+	}
+	// The promoted member's update must now be accepted, not rejected
+	// with other_host_syncing.
+	send(member, updateMsg("r1", "pw1", "memB", 20))
+	if ack := waitFor(t, member, "update_ack", 2*time.Second); ack["room"].(map[string]any)["isHost"] != true {
+		t.Fatalf("promoted member update should ack isHost=true, got %v", ack)
+	}
+}
+
+// F11-j: peer_left carries the recomputed barrier so the host is released
+// immediately when the loading member drops.
+func TestPeerLeftReleasesBarrier(t *testing.T) {
+	srv := startTestServer(t)
+	defer srv.Close()
+
+	host := dial(t, srv)
+	defer host.Close()
+	member := dial(t, srv)
+
+	send(host, updateMsgWithTarget("r1", "pw1", "hostA", 10))
+	waitFor(t, host, "update_ack", 2*time.Second)
+	send(member, map[string]any{"type": "join", "room": "r1", "password": "pw1", "tempUser": "memB"})
+	waitFor(t, member, "joined", 2*time.Second)
+	waitFor(t, host, "peer_joined", 2*time.Second)
+
+	send(member, memberLoadingMsg("r1", "pw1", "memB", true, true))
+	if mu := waitFor(t, host, "member_update", 2*time.Second); mu["waitForLoadding"] != true {
+		t.Fatalf("loading should hold the barrier")
+	}
+
+	_ = member.Close()
+	if pl := waitFor(t, host, "peer_left", 2*time.Second); pl["waitForLoadding"] != false {
+		t.Fatalf("peer_left must carry the released barrier, got %v", pl)
+	}
+}
+
+// F11-m: unchanged update_member heartbeats echo only the sender.
+func TestMemberUpdateDedup(t *testing.T) {
+	srv := startTestServer(t)
+	defer srv.Close()
+
+	host := dial(t, srv)
+	defer host.Close()
+	member := dial(t, srv)
+	defer member.Close()
+
+	send(host, updateMsgWithTarget("r1", "pw1", "hostA", 10))
+	waitFor(t, host, "update_ack", 2*time.Second)
+	send(member, map[string]any{"type": "join", "room": "r1", "password": "pw1", "tempUser": "memB"})
+	waitFor(t, member, "joined", 2*time.Second)
+	waitFor(t, host, "peer_joined", 2*time.Second)
+
+	// First report changes state (target nil → set): broadcasts to all.
+	send(member, memberLoadingMsg("r1", "pw1", "memB", false, true))
+	_ = waitFor(t, member, "member_update", 2*time.Second)
+	_ = waitFor(t, host, "member_update", 2*time.Second)
+
+	// A real change still fans out.
+	send(member, memberLoadingMsg("r1", "pw1", "memB", true, true))
+	if mu := waitFor(t, host, "member_update", 2*time.Second); mu["isLoading"] != true {
+		t.Fatalf("changed heartbeat must broadcast")
+	}
+	_ = waitFor(t, member, "member_update", 2*time.Second) // drain echo
+
+	// Identical heartbeat last: unchanged → sender echo only. NB a read
+	// timeout permanently corrupts a gorilla conn, so this assertion must
+	// come last — the host conn is unusable afterwards.
+	send(member, memberLoadingMsg("r1", "pw1", "memB", true, true))
+	_ = waitFor(t, member, "member_update", 2*time.Second) // echo
+	_ = host.SetReadDeadline(time.Now().Add(300 * time.Millisecond))
+	_, raw, err := host.ReadMessage()
+	if err == nil {
+		var m map[string]any
+		_ = json.Unmarshal(raw, &m)
+		if m["type"] == "member_update" {
+			t.Fatalf("unchanged heartbeat must not broadcast: %s", raw)
+		}
+	}
+}
+
+// F11-o: navigate snapshots reset to paused@0 so window joiners wait.
+func TestNavigateResetsPaused(t *testing.T) {
+	srv := startTestServer(t)
+	defer srv.Close()
+
+	host := dial(t, srv)
+	defer host.Close()
+
+	send(host, updateMsgWithTarget("r1", "pw1", "hostA", 50))
+	waitFor(t, host, "update_ack", 2*time.Second)
+
+	send(host, map[string]any{
+		"type": "navigate", "room": "r1", "password": "pw1", "tempUser": "hostA",
+		"target": map[string]any{"type": "video", "bvid": "BV2", "cid": 200},
+	})
+	// navigate broadcasts to others only; join now and inspect snapshot.
+	joiner := dial(t, srv)
+	defer joiner.Close()
+	send(joiner, map[string]any{"type": "join", "room": "r1", "password": "pw1", "tempUser": "memB"})
+	j := waitFor(t, joiner, "joined", 2*time.Second)
+	snap := j["room"].(map[string]any)
+	if snap["paused"] != false && snap["paused"] != true {
+		t.Fatalf("snapshot missing paused: %v", snap)
+	}
+	if snap["paused"] != true {
+		t.Fatalf("post-navigate snapshot should be paused, got %v", snap["paused"])
+	}
+	if snap["currentTime"] != 0.0 {
+		t.Fatalf("post-navigate currentTime should be 0, got %v", snap["currentTime"])
 	}
 }

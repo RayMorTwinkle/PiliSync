@@ -196,6 +196,47 @@
 - 移动端：自由拖拽、松手吸附近侧边缘、推过阈值或点「‹/›」按就近侧收编成 30px 边缘条（点按恢复）；全屏/PiP/房间页自动隐藏。
 - 桌面端：固定右下角（`Positioned right/bottom:10`），置顶于应用内容之上。
 
+## F11 · 同步体验打磨轮（2026-09-21，4 路审查 + 验证复核）
+
+**状态：全部实施完毕并通过门禁**（go vet + race / flutter test +41 / analyze 无新增）。补注：F11-f 终态新增 `WtConnectionState.failed`（重连耗尽→toast+leave）；悬浮面板卡片/边条增加连接态指示（红点+「连接中…/已断开」文案）；`_memberTick` 增加离线守卫冻结 stale 快照校准（原列残留项，本轮顺手做掉）；`maxMemberLoadingWait` 改为 RoomStore 构造捕获（消测试数据竞争）；e2e 房号改唯一（宿主移交后同名房的 `other_host_syncing` 是正确语义，测试隔离问题非缺陷）。
+
+用户反馈：「同步勉强能用但体验差，尤其一方卡顿时」。4 个审查 agent（客户端同步/VideoTogether 参照/服务端/UX）+ 1 个验证 agent 复核，V15（navigate↔update 竞态）判定误报（TCP 保序 + 单连接串行 handle），其余确认。
+
+### 核心恶性循环（本轮主攻）
+
+**成员落后 δ → seek 校正 → seek 丢缓存触发 buffering → 裸 isBuffering 立即上报 → 全房屏障 → 房主顿挫；且缓冲中的成员继续被发 seek → 缓存反复被丢 → 永远出不来。** 三条链路互相放大，是「一方卡顿全屋难受」的根因。
+
+### 修复清单
+
+| # | 问题 | 位置 | 修法 | 验收 |
+|---|---|---|---|---|
+| F11-a | **缓冲中的成员仍被发 seek**（`isThisMemberLoading` 只豁免 pause 不豁免 seek）→ seek 丢缓存→更卡→无限循环 | `wt_sync_logic.dart calibrate` | `isThisMemberLoading` 时不发 seek（让缓存填满）；恢复后一次对齐 | 单测：loading member + diff=5s → seekTo==null |
+| F11-b | **loading 上报零迟滞**：seek 后 mpv 必 buffering → 一次 1s 校正 seek = 全房 pause→resume 顿挫 | `wt_member_coordinator` tick 末尾上报；`watch_together_service _effectiveLoading` | 持续缓冲 ≥1.5s 才上报 true（dwell）；自己发出的同步 seek 后 2s 内不抬升上报；解除即时 | 单测：seek 后瞬时 buffering 不产生 update_member(true)；连续 2s buffering 才上报 |
+| F11-c | **位置整秒精度**：adapter 用 `position.value`(RxInt 秒) 而目标是外推小数 → 落后 δ<1s 的成员稳态周期性误 seek，每次 seek 清空弹幕 | `wt_player_adapter.dart`；`controller.dart positionInMilliseconds` 已存在 | adapter 改读 `positionInMilliseconds`（成员 localTime + 房主 currentTime 同改） | 单测：local=100.0 target=100.3 无 seek；实测 60s 内 CALIBRATE seek ≈0 |
+| F11-d | **房主 buffering 毛刺无迟滞**：`reportedPaused` 瞬时采样 isBuffering → paused 广播抖动 → 全员 pause/play 乒乓；且缓冲开始要等 2s tick 才广播 → 成员超前后被拽回 | `wt_playback_coordinator reportedPaused`；`watch_together_service _statusSub` | buffering 持续 ≥1s 才计入 reportedPaused；isBuffering 上升沿（迟滞确认后）立即 `_hostUpdate` 不等 tick | 单测：buffering [t,f,t,f] 各<1s → reportedPaused 稳定；实测房主卡顿成员不回拽 |
+| F11-e | **seek 命令不落地**：`controller.seekTo` 内 `await stream.buffer.first` 无超时 + `seek()` fire-and-forget → coordinator 3s timeout 形同虚设，pending seek 可堆积/迟发 | `pl_player/controller.dart` | buffer 等待加超时；seekTo 返回真实完成 future | 单测/插桩：暂停态 seekTo 在 <1s 内落到 mpv |
+| F11-f | **断线零感知**：`client.state` 非 Rx；重连 12 次耗尽后静默僵尸房；重连成功误弹「已加入房间/房间已创建」 | `wt_signaling_client`；`watch_together_service _listen/_handleEvent` | service 暴露 `connState` Rx 桥接；断开 toast 节流提示；`WtJoinedEvent` 区分首次/重连（重连弹「已重新连接」）；耗尽 toast+leave | 拔网→1s 内提示；恢复→「已重新连接」；服务器不可达→终态提示非僵尸 |
+| F11-g | **屏障压停无反馈**：房主全屏被静默 pause，点播放被静默打回（面板全屏隐藏） | `_applyHostBarrier`；`wt_playback_coordinator` | 首次压停 toast「成员缓冲中，已暂停等待」（节流）；屏障解除自动恢复时 toast「成员已就绪」 | 成员限速→房主端出现解释文案而非静默 |
+| F11-h | **成员手动 play 被屏障静默打回** | `wt_sync_logic calibrate`；`_playbackReqSub` 只处理房主 | 屏障强停成员时若本地刚在播 → toast「等待成员缓冲」节流一次 | 成员屏障期点播放→有解释文案 |
+| F11-i | **房主断开无继任**：disconnect 只 peer_left，HostId 不变 → 房间冻结 3min 过期；成员永不发 update 无法接管 | `ws.go disconnect`；`room.go` | 房主断开时 HostId 移交最早在线成员 + broadcastRoom（客户端 `_applyAuthoritativeRole` 已有升职路径，零客户端改动） | go test：host 断开后成员 ≤2 tick 收到 isHost=true 快照且其 update 获 ack |
+| F11-j | **屏障解除不广播**：`peer_left`/`navigate` 广播无 `waitForLoadding` → loading 成员掉线后房主多停 ~2s | `ws.go` 两处广播；客户端 `WtPeerEvent`/`WtNavigateEvent` | 广播补 `waitForLoadding` 字段；客户端两事件分支读取更新快照 | go test：loading 成员断开 → peer_left.waitForLoadding==false |
+| F11-k | **`sameTarget` nil 宽容违反 spec F2**：成员在非视频页（target=nil）的 loading 仍压全房 | `room.go sameTarget` | 成员侧 target==nil → 不计入聚合 | go test：无 target loading 成员 → waitForLoadding==false |
+| F11-l | **片尾豁免严格浮点相等** `CurrentTime == Duration` | `room.go anyoneLoadingLocked` | `Duration>0 && CurrentTime >= Duration-0.5` | go test：99.9/100 + loading → false |
+| F11-m | **update_member 无条件全员广播 + 无房间人数上限**：N²/2s 放大，重连风暴级联 | `ws.go handleUpdateMember/broadcast` | 状态未变时只回显 sender（保留 `t` 对时采样）；`maxMembersPerRoom=32` | go test：两条相同 update_member → 仅一条广播；压测 egress 下降 |
+| F11-n | **pongWait 余量仅 6s 且普通消息不刷 deadline** → 弱网排队误踢 | `ws.go` 常量+readPump | `pongWait` 60→120s；ReadMessage 成功后无条件刷 deadline | 模拟不回 pong 但发业务消息的连接存活 ≥110s |
+| F11-o | **navigate 重置 playing@0** → 窗口期 join/重连成员被 seek 回片头 | `room.go setTargetLocked` | 重置时 `Paused=true`（成员停在原地等真实 update） | go test：navigate 后快照 paused==true |
+| F11-p | `room_not_exist` 文案误导向（「房间已关闭或过期」→ 输错房号的人以为房被关） | `watch_together_service _handleError` | 改「房间不存在或已过期」 | 输入不存在房号 → 文案含「不存在」 |
+
+### 残留/不做（记录备查）
+
+- **room→clients 广播索引**：broadcast 仍全 hub 扫描，F11-m 去重后小房间（≤5 人）无感；大房间场景再优化。
+- **成员心跳 TTL（VT IsJoined 10s）**：App 挂起时 dart isolate 停 → WS pong 停 → 120s pongWait 踢除 + LoadingSince 60s TTL 已双兜底；列为观察项。
+- **成员离开视频页后 coordinator 仍校准后台 player**：F11-k 已修屏障侧；校准残留播放器的优先级低（需 route↔target 比对，下一轮）。
+- **断线期间成员快照 stale 仍外推/seek**：~~不做~~ 已随本轮修复——`_memberTick` 增加离线守卫，`connState != connected` 时冻结校准，避免断线期间持续 seek、重连后大跳变（VT 的 HTTP 兜底仍不做）。
+- **面板 per-member loading 显示 / 等待时长 / WaitForLoadding 用户开关 / play() 失败红字提示**：UX 增强，下一轮。
+- **tsync 偏移重收敛**（min-RTT 只进不退）、**broadcastRoom per-recipient marshal**：性能项，观察。
+- **V15 navigate↔update 竞态**：验证判定误报（同连接 TCP 保序），不修。
+
 ---
 
 ## 验收总闸

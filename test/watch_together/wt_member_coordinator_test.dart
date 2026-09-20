@@ -43,6 +43,9 @@ class FakePlayer implements WtPlayerAdapter {
   @override
   StreamSubscription<void> onStatusChanged(void Function(bool) cb) =>
       const Stream<void>.empty().listen(null);
+  @override
+  StreamSubscription<bool> onBufferingChanged(void Function(bool) cb) =>
+      const Stream<bool>.empty().listen(null);
 
   void advance(double seconds) {
     if (isPlaying && !isBuffering) positionMs += seconds * 1000 * speed;

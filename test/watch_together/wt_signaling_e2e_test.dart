@@ -41,6 +41,10 @@ void main() {
       markTestSkipped('signaling server not running on 127.0.0.1:9901');
       return;
     }
+    // Unique room per run: a lingering room from a previous run keeps
+    // HostId bound to a dead tempUser after host-handover, so reusing the
+    // same name makes the new host fail with other_host_syncing.
+    final room = 'e2e1-${DateTime.now().microsecondsSinceEpoch}';
     final hostEvents = <WtEvent>[];
     final memberEvents = <WtEvent>[];
     final hostSub = host.events.listen(hostEvents.add);
@@ -48,7 +52,7 @@ void main() {
 
     await host.connect(
       serverBase: '127.0.0.1:9901',
-      room: 'e2e1',
+      room: room,
       user: 'h1',
       pass: '',
     );
@@ -56,7 +60,7 @@ void main() {
     host.updatePlayback(
       WtPlaybackState(lastUpdateClientTime: host.timeSync.now()),
     );
-    await member.connect(serverBase: '127.0.0.1:9901', room: 'e2e1', user: 'm1', pass: '');
+    await member.connect(serverBase: '127.0.0.1:9901', room: room, user: 'm1', pass: '');
     member.join();
 
     await Future<void>.delayed(const Duration(milliseconds: 300));

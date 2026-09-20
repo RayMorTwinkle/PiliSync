@@ -225,7 +225,7 @@ class _WatchTogetherPageState extends State<WatchTogetherPage> {
               if (open) ...[
                 const SizedBox(height: 8),
                 Text(
-                  'role=${service.role.value} conn=${service.client.state} '
+                  'role=${service.role.value} conn=${service.connState.value} '
                   'tsOffset=${service.client.timeSync.offset.toStringAsFixed(1)} '
                   'minTrip=${service.client.timeSync.hasValidSample ? service.client.timeSync.minTrip.toStringAsFixed(3) : "-"}',
                   style: theme.textTheme.bodySmall,

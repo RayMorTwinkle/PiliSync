@@ -24,10 +24,12 @@ class PlPlayerAdapter implements WtPlayerAdapter, WtPlaybackCommandSource {
   bool get isBuffering => _p?.isBuffering.value ?? false;
 
   @override
-  double get positionMs => (_p?.position.value ?? 0) * 1000;
+  // 毫秒精度：整秒 position 与外推小数目标叠加会把 <1s 的稳态偏差
+  // 量化成 >1s 的 diff，周期性误触发 seek（且每次 seek 清空弹幕）。
+  double get positionMs => (_p?.positionInMilliseconds ?? 0).toDouble();
 
   @override
-  double get durationMs => (_p?.duration.value ?? 0) * 1000;
+  double get durationMs => (_p?.durationInMilliseconds ?? 0).toDouble();
 
   @override
   double get speed => _p?.playbackSpeed ?? 1.0;
@@ -63,5 +65,14 @@ class PlPlayerAdapter implements WtPlayerAdapter, WtPlaybackCommandSource {
       return const Stream<void>.empty().listen(null);
     }
     return p.playerStatus.listen((status) => cb(status.isPlaying));
+  }
+
+  @override
+  StreamSubscription<bool> onBufferingChanged(void Function(bool buffering) cb) {
+    final p = PlPlayerController.instance;
+    if (p == null) {
+      return const Stream<bool>.empty().listen(null);
+    }
+    return p.isBuffering.listen(cb);
   }
 }
