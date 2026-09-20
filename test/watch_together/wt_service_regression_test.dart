@@ -64,6 +64,58 @@ void main() {
     expect(player.commands, ['pause']);
   });
 
+  test('stuck member player releases room barrier after loading cap', () async {
+    // Player exists but never finishes loading (dead network / failed
+    // source): isBuffering stays true. The member must stop reporting
+    // isLoading once the run exceeds the cap, or the host is held paused
+    // behind waitForLoadding forever.
+    final player = FakePlayer()
+      ..isPlaying = true
+      ..isBuffering = true;
+    final client = RecordingSignaling();
+    addTearDown(client.dispose);
+    var now = 100.0;
+    final service = WatchTogetherService.forTesting(
+      player: player,
+      client: client,
+      clock: () => now,
+    );
+    service.role.value = WtRole.member;
+    service.inRoom.value = true;
+    service.room.value = WtRoomSnapshot(
+      name: 'test', isHost: false, isProtected: false, memberCount: 2,
+      waitForLoadding: true,
+      playback: WtPlaybackState(
+        paused: false, currentTime: 10, duration: 120,
+        lastUpdateClientTime: now,
+      ),
+    );
+
+    await service.tickForTesting();
+    expect(client.loadingReports.last, isTrue);
+
+    // Still within the cap: keeps reporting loading.
+    now += 10;
+    await service.tickForTesting();
+    expect(client.loadingReports.last, isTrue);
+
+    // Past the 20s cap (heartbeat needs >=2s between reports).
+    now += 12; // total 22s of continuous buffering
+    await service.tickForTesting();
+    expect(client.loadingReports.last, isFalse,
+        reason: 'reports=${client.loadingReports}');
+
+    // Buffering clears then restarts: a fresh run gets a fresh window.
+    player.isBuffering = false;
+    now += 3;
+    await service.tickForTesting();
+    player.isBuffering = true;
+    now += 3;
+    await service.tickForTesting();
+    expect(client.loadingReports.last, isTrue,
+        reason: 'reports=${client.loadingReports}');
+  }, timeout: const Timeout(Duration(seconds: 5)));
+
   test('service resumes member after paused seek and does not freeze at target', () async {
     final player = FakePlayer();
     final client = RecordingSignaling();
