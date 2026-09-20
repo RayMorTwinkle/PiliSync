@@ -1,6 +1,7 @@
 package main
 
 import (
+	"flag"
 	"fmt"
 	"time"
 
@@ -8,7 +9,9 @@ import (
 )
 
 func main() {
-	conn, _, err := websocket.DefaultDialer.Dial("ws://127.0.0.1:9901/ws", nil)
+	url := flag.String("server", "ws://127.0.0.1:9901/ws", "ws endpoint")
+	flag.Parse()
+	conn, _, err := websocket.DefaultDialer.Dial(*url, nil)
 	if err != nil {
 		fmt.Println("dial err:", err)
 		return
