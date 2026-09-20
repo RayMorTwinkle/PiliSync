@@ -187,6 +187,10 @@ dependencies:
       ref: main
 
 dependency_overrides:
+  # 7.1.0+ calls NWPath.isUltraConstrained unconditionally → needs the
+  # macOS 26 SDK (Xcode 26+); this machine ships Xcode 16.2 / SDK 15.2.
+  # Revisit after an Xcode upgrade.
+  connectivity_plus: 7.0.0
   clipboard:
     git:
       url: https://github.com/dongfengweixiao/flutter_clipboard.git
