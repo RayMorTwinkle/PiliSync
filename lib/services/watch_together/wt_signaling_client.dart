@@ -154,7 +154,12 @@ class WtSignalingClient {
 
   void _scheduleReconnect() {
     if (_disposed || _reconnectTimer != null) return;
-    if (_reconnectAttempt >= _maxReconnectAttempt) return;
+    if (_reconnectAttempt >= _maxReconnectAttempt) {
+      // Terminal state: surface it so the UI can close the room instead
+      // of sitting in a zombie "in room but dead" state forever.
+      _setState(WtConnectionState.failed);
+      return;
+    }
     final exp = (1 << _reconnectAttempt.clamp(0, 4)).clamp(1, 15);
     // full jitter to avoid synchronized reconnect storms
     final delay = Duration(
@@ -237,6 +242,7 @@ class WtSignalingClient {
           WtNavigateEvent(
             msg['from'] as String? ?? '',
             WtTarget.fromJson(msg['target'] as Map<String, dynamic>),
+            msg['waitForLoadding'] as bool?,
           ),
         );
       case 'peer_joined':
@@ -245,6 +251,7 @@ class WtSignalingClient {
             true,
             msg['tempUser'] as String? ?? '',
             (msg['memberCount'] as num?)?.toInt() ?? 0,
+            msg['waitForLoadding'] as bool?,
           ),
         );
       case 'peer_left':
@@ -253,6 +260,7 @@ class WtSignalingClient {
             false,
             msg['tempUser'] as String? ?? '',
             (msg['memberCount'] as num?)?.toInt() ?? 0,
+            msg['waitForLoadding'] as bool?,
           ),
         );
       case 'webrtc':

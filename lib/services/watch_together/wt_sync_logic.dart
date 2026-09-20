@@ -75,7 +75,10 @@ class WtPlaybackLogic {
     final target = paused ? room.currentTime : roomRealTime;
     final diff = (localTime - target).abs();
     final threshold = paused ? pausedSeekThreshold : playingSeekThreshold;
-    if (!isSettling && diff > threshold) {
+    // A buffering member must not seek: the seek discards the buffer it
+    // is filling, restarting the load and extending the room barrier —
+    // the lag-amplification loop. It realigns in one shot once ready.
+    if (!isSettling && !isThisMemberLoading && diff > threshold) {
       seekTo = target;
     }
 

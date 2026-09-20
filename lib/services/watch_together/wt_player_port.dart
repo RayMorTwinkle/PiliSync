@@ -16,5 +16,9 @@ abstract interface class WtPlayerAdapter {
   Future<void> setSpeed(double speed);
 
   StreamSubscription<void> onStatusChanged(void Function(bool playing) cb);
+
+  /// Buffering-edge notifications (host uses them to broadcast stalls
+  /// immediately instead of waiting for the next 2s tick).
+  StreamSubscription<bool> onBufferingChanged(void Function(bool buffering) cb);
 }
 

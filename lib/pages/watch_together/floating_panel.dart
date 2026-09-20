@@ -4,6 +4,7 @@ import 'package:PiliPlus/plugin/pl_player/controller.dart';
 import 'package:PiliPlus/services/pip_overlay_service.dart';
 import 'package:PiliPlus/services/watch_together/watch_together_service.dart';
 import 'package:PiliPlus/services/watch_together/wt_call_manager.dart';
+import 'package:PiliPlus/services/watch_together/wt_models.dart';
 import 'package:PiliPlus/utils/platform_utils.dart';
 import 'package:flutter/material.dart';
 import 'package:get/get.dart';
@@ -64,6 +65,7 @@ class _WtFloatingPanelState extends State<WtFloatingPanel> {
     return Obx(() {
       final inRoom = svc.inRoom.value;
       final room = svc.room.value;
+      final conn = svc.connState.value;
       final callState = svc.call.state;
       final micMuted = svc.call.micMuted;
       final speakerOn = svc.call.speakerOn;
@@ -78,7 +80,7 @@ class _WtFloatingPanelState extends State<WtFloatingPanel> {
       final theme = Theme.of(context);
       final card = _card(theme, svc, room?.name ?? '', room?.memberCount ?? 0,
           room?.waitForLoadding ?? false, room?.playback.videoTitle ?? '',
-          callState, micMuted, speakerOn);
+          conn, callState, micMuted, speakerOn);
 
       // The panel fills the root Stack; size comes from MediaQuery — a
       // LayoutBuilder here would break the Stack→Positioned ParentData
@@ -97,7 +99,7 @@ class _WtFloatingPanelState extends State<WtFloatingPanel> {
               // bottom edge even if _pos.dy came from a low card drag
               top: pos.dy.clamp(0.0, (h - 96).clamp(0.0, double.infinity)),
               child: _edgeTab(theme, svc,
-                  room?.waitForLoadding ?? false, callState),
+                  room?.waitForLoadding ?? false, conn, callState),
             );
           }
           return Positioned(
@@ -133,7 +135,7 @@ class _WtFloatingPanelState extends State<WtFloatingPanel> {
   }
 
   Widget _edgeTab(ThemeData theme, WatchTogetherService svc,
-      bool waiting, WtCallState callState) {
+      bool waiting, WtConnectionState conn, WtCallState callState) {
     return GestureDetector(
       onTap: () => setState(() {
         _dockLeft = false;
@@ -162,7 +164,7 @@ class _WtFloatingPanelState extends State<WtFloatingPanel> {
               Icon(Icons.groups_2,
                   size: 18, color: theme.colorScheme.primary),
               const SizedBox(height: 4),
-              _dot(waiting, callState),
+              _dot(waiting, conn, callState),
             ],
           ),
         ),
@@ -170,11 +172,18 @@ class _WtFloatingPanelState extends State<WtFloatingPanel> {
     );
   }
 
-  Widget _dot(bool waiting, WtCallState callState) {
-    final color = switch (callState) {
-      WtCallState.connected => Colors.green,
-      WtCallState.calling => Colors.orange,
-      _ => waiting ? Colors.orange : Colors.green,
+  Widget _dot(
+      bool waiting, WtConnectionState conn, WtCallState callState) {
+    // Signaling health wins over call/buffer hints — a dead socket means
+    // nothing else on the panel is current.
+    final color = switch (conn) {
+      WtConnectionState.connected => switch (callState) {
+          WtCallState.connected => Colors.green,
+          WtCallState.calling => Colors.orange,
+          _ => waiting ? Colors.orange : Colors.green,
+        },
+      WtConnectionState.connecting => Colors.orange,
+      _ => Colors.red,
     };
     return Container(
       width: 8,
@@ -190,6 +199,7 @@ class _WtFloatingPanelState extends State<WtFloatingPanel> {
     int memberCount,
     bool waiting,
     String videoTitle,
+    WtConnectionState conn,
     WtCallState callState,
     bool micMuted,
     bool speakerOn,
@@ -225,7 +235,7 @@ class _WtFloatingPanelState extends State<WtFloatingPanel> {
                     style: theme.textTheme.labelSmall,
                   ),
                   const SizedBox(width: 6),
-                  _dot(waiting, callState),
+                  _dot(waiting, conn, callState),
                 ],
               ),
               if (videoTitle.isNotEmpty) ...[
@@ -240,7 +250,15 @@ class _WtFloatingPanelState extends State<WtFloatingPanel> {
               const SizedBox(height: 2),
               Row(
                 children: [
-                  if (waiting)
+                  if (conn != WtConnectionState.connected)
+                    Text(
+                      conn == WtConnectionState.connecting
+                          ? '连接中…'
+                          : '已断开',
+                      style: theme.textTheme.labelSmall
+                          ?.copyWith(color: Colors.red),
+                    )
+                  else if (waiting)
                     Text('等待成员缓冲',
                         style: theme.textTheme.labelSmall
                             ?.copyWith(color: Colors.orange)),

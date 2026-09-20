@@ -178,14 +178,26 @@ class WtMemberUpdateEvent extends WtEvent {
 class WtNavigateEvent extends WtEvent {
   final String from;
   final WtTarget target;
-  const WtNavigateEvent(this.from, this.target);
+  // Server broadcasts the recomputed barrier with the navigate so the
+  // room does not sit behind a stale waitForLoadding until the next tick.
+  final bool? waitForLoadding;
+  const WtNavigateEvent(this.from, this.target, [this.waitForLoadding]);
 }
 
 class WtPeerEvent extends WtEvent {
   final bool joined;
   final String tempUser;
   final int memberCount;
-  const WtPeerEvent(this.joined, this.tempUser, this.memberCount);
+  // Present since F11-j: peer join/leave recomputes the barrier server-side
+  // (a loading member's departure releases it), so the field propagates the
+  // release immediately instead of waiting ~2s for the next update_ack.
+  final bool? waitForLoadding;
+  const WtPeerEvent(
+    this.joined,
+    this.tempUser,
+    this.memberCount, [
+    this.waitForLoadding,
+  ]);
 }
 
 class WtWebRTCEvent extends WtEvent {
@@ -206,7 +218,7 @@ class WtErrorEvent extends WtEvent {
   const WtErrorEvent(this.code);
 }
 
-enum WtConnectionState { disconnected, connecting, connected }
+enum WtConnectionState { disconnected, connecting, connected, failed }
 
 class WtSyncAction {
   final double? seekTo;

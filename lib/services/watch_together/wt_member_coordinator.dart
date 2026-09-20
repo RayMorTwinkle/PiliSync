@@ -11,6 +11,7 @@ class WtMemberCoordinator {
   // player converges (paused-seek precision is coarse).
   double _lastSeekAt = -double.infinity;
   static const _settleSeconds = 1.5;
+  static const _seekLoadingSilenceSeconds = 2.0;
   late WtPlayerAdapter player;
   late void Function(String) dbg;
 
@@ -82,7 +83,11 @@ class WtMemberCoordinator {
     }
 
     // Read AFTER commands; do not reuse the pre-seek position as readiness.
-    final loading = player.isBuffering;
+    // Seek-induced refills get a silence window: mpv flushes its buffer on
+    // every sync seek, and reporting that dip would pause the whole room.
+    final loading =
+        player.isBuffering &&
+        now - _lastSeekAt >= _seekLoadingSilenceSeconds;
     reportLoading(loading);
   }
 

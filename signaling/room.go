@@ -20,17 +20,22 @@ type Target struct {
 }
 
 // sameTarget reports whether a member's reported page matches the room's
-// current target. A nil side means "unknown" and does not count as a
-// mismatch (older clients do not report a target).
-func sameTarget(a, b *Target) bool {
-	if a == nil || b == nil {
+// current target. A nil member target means "not on the video page" and
+// must NOT count — a member sitting on the room page with a background
+// player still buffering would otherwise hold the room barrier (spec F2).
+// A nil room target stays lenient: early-room states still aggregate.
+func sameTarget(member, room *Target) bool {
+	if member == nil {
+		return false
+	}
+	if room == nil {
 		return true
 	}
-	return a.Type == b.Type &&
-		a.Bvid == b.Bvid &&
-		a.Cid == b.Cid &&
-		a.Epid == b.Epid &&
-		a.RoomId == b.RoomId
+	return member.Type == room.Type &&
+		member.Bvid == room.Bvid &&
+		member.Cid == room.Cid &&
+		member.Epid == room.Epid &&
+		member.RoomId == room.RoomId
 }
 
 type PlaybackState struct {
@@ -57,6 +62,8 @@ type Member struct {
 	// maxMemberLoadingWait, so a member whose player is permanently wedged
 	// (dead network, failed source) cannot deadlock the room forever.
 	LoadingSince time.Time `json:"-"`
+	// JoinedAt orders members for host handover on host disconnect.
+	JoinedAt time.Time `json:"-"`
 }
 
 // mu guards HostId, Playback, members and seen. Never acquire Hub.mu while
@@ -74,6 +81,8 @@ type Room struct {
 	// seen: tempUsers that have ever sent `update` (VT userIds). Written
 	// only, never deleted while the room lives; drives takeover semantics.
 	seen map[string]bool
+	// loadingWait is captured from the owning RoomStore at creation.
+	loadingWait time.Duration
 }
 
 func (r *Room) setHostLocked(id string) { r.HostId = id }
@@ -90,13 +99,16 @@ func (r *Room) IsProtected() bool { return r.Password != md5hex("") }
 // page is loading, except when playback reached the end (VT: a member
 // buffering on the last frame must not stall the room).
 func (r *Room) anyoneLoadingLocked() bool {
+	// End-of-video exemption with float tolerance: a member buffering on
+	// the tail (credits) must not stall the room. Strict equality missed
+	// real reports like currentTime=99.9 / duration=100.
 	if r.Playback.Duration > 0 &&
-		r.Playback.CurrentTime == r.Playback.Duration {
+		r.Playback.CurrentTime >= r.Playback.Duration-0.5 {
 		return false
 	}
 	for _, m := range r.members {
 		if m.IsLoading &&
-			time.Since(m.LoadingSince) < maxMemberLoadingWait &&
+			time.Since(m.LoadingSince) < r.loadingWait &&
 			sameTarget(m.Target, r.Playback.Target) {
 			return true
 		}
@@ -141,10 +153,12 @@ func (r *Room) updatePlaybackLocked(pb PlaybackState) {
 
 // setTargetLocked switches to a new video; position resets to the start so
 // a snapshot taken between navigate and the next update is self-consistent.
+// Paused=true: a member joining/reconnecting in that window must wait at
+// the start rather than be seeked to 0 while "playing".
 func (r *Room) setTargetLocked(t *Target) {
 	r.Playback.Target = t
 	r.Playback.CurrentTime = 0
-	r.Playback.Paused = false
+	r.Playback.Paused = true
 	r.Playback.LastUpdateClientTime = now()
 	r.Playback.LastUpdateServerTime = now()
 }
@@ -157,8 +171,35 @@ func (r *Room) upsertMember(tempUser string) {
 
 func (r *Room) upsertMemberLocked(tempUser string) {
 	if _, ok := r.members[tempUser]; !ok {
-		r.members[tempUser] = &Member{TempUser: tempUser}
+		r.members[tempUser] = &Member{TempUser: tempUser, JoinedAt: time.Now()}
 	}
+}
+
+func (r *Room) hasMember(tempUser string) bool {
+	r.mu.Lock()
+	defer r.mu.Unlock()
+	_, ok := r.members[tempUser]
+	return ok
+}
+
+// transferHostLocked hands HostId to the earliest-joined online member —
+// a host disconnect used to freeze the room until expiry because members
+// never send `update` and could never take over. Returns "" when nobody
+// remains (room then expires normally, preserving brief host reconnects
+// for the alone-host case).
+func (r *Room) transferHostLocked() string {
+	var oldest *Member
+	for _, m := range r.members {
+		if oldest == nil || m.JoinedAt.Before(oldest.JoinedAt) {
+			oldest = m
+		}
+	}
+	if oldest == nil {
+		return ""
+	}
+	r.HostId = oldest.TempUser
+	r.seen[oldest.TempUser] = true
+	return oldest.TempUser
 }
 
 func (r *Room) removeMember(tempUser string) {
@@ -168,20 +209,35 @@ func (r *Room) removeMember(tempUser string) {
 }
 
 // setLoading records a member's loading flag and current page. Returns
-// false when the tempUser is not an online member.
-func (r *Room) setLoading(tempUser string, isLoading bool, target *Target) bool {
+// ok=false when the tempUser is not an online member; changed reports
+// whether the published member_update state (isLoading/target) actually
+// moved — unchanged heartbeats only warrant a sender echo, not a room-wide
+// broadcast.
+func (r *Room) setLoading(tempUser string, isLoading bool, target *Target) (ok, changed bool) {
 	r.mu.Lock()
 	defer r.mu.Unlock()
 	m, ok := r.members[tempUser]
 	if !ok {
-		return false
+		return false, false
 	}
+	changed = m.IsLoading != isLoading || !targetEqual(m.Target, target)
 	if isLoading && !m.IsLoading {
 		m.LoadingSince = time.Now()
 	}
 	m.IsLoading = isLoading
 	m.Target = target
-	return true
+	return true, changed
+}
+
+func targetEqual(a, b *Target) bool {
+	if a == nil || b == nil {
+		return a == b
+	}
+	return a.Type == b.Type &&
+		a.Bvid == b.Bvid &&
+		a.Cid == b.Cid &&
+		a.Epid == b.Epid &&
+		a.RoomId == b.RoomId
 }
 
 func (r *Room) memberCount() int {
@@ -240,24 +296,26 @@ var (
 type RoomStore struct {
 	mu    sync.Mutex
 	rooms map[string]*Room
-	// expire/interval are captured at construction so tests can tune them
-	// per store without racing the package defaults.
-	expire   time.Duration
-	interval time.Duration
+	// expire/interval/loadingWait are captured at construction so tests can
+	// tune them per store without racing the package defaults.
+	expire      time.Duration
+	interval    time.Duration
+	loadingWait time.Duration
 	// called when a room expires; the store lock is NOT held during the call
 	onExpire func(room *Room)
 }
 
 func NewRoomStore(onExpire func(room *Room)) *RoomStore {
-	return newRoomStore(onExpire, roomExpire, cleanupInterval)
+	return newRoomStore(onExpire, roomExpire, cleanupInterval, maxMemberLoadingWait)
 }
 
-func newRoomStore(onExpire func(room *Room), expire, interval time.Duration) *RoomStore {
+func newRoomStore(onExpire func(room *Room), expire, interval, loadingWait time.Duration) *RoomStore {
 	rs := &RoomStore{
-		rooms:    make(map[string]*Room),
-		expire:   expire,
-		interval: interval,
-		onExpire: onExpire,
+		rooms:       make(map[string]*Room),
+		expire:      expire,
+		interval:    interval,
+		loadingWait: loadingWait,
+		onExpire:    onExpire,
 	}
 	go rs.cleanupLoop()
 	return rs
@@ -304,12 +362,13 @@ func (rs *RoomStore) GetOrCreate(name, password, hostId string) *Room {
 			return nil
 		}
 		room = &Room{
-			id:       newRoomID(),
-			Name:     name,
-			Password: md5hex(password),
-			HostId:   hostId,
-			members:  make(map[string]*Member),
-			seen:     map[string]bool{hostId: true},
+			id:          newRoomID(),
+			Name:        name,
+			Password:    md5hex(password),
+			HostId:      hostId,
+			members:     make(map[string]*Member),
+			seen:        map[string]bool{hostId: true},
+			loadingWait: rs.loadingWait,
 		}
 		room.Playback.LastUpdateServerTime = now()
 		rs.rooms[name] = room

@@ -1388,7 +1388,12 @@ class PlPlayerController with BlockConfigMixin {
     Future<void> seek() async {
       if (isSeek) {
         /// 拖动进度条调节时，不等待第一帧，防止抖动
-        await _videoPlayerController?.stream.buffer.first;
+        /// 暂停且缓存已满时 buffer 流可能长时间不发射——无超时会把
+        /// 同步 seek 无限挂起（一起看校准路径依赖 seekTo 真实完成）。
+        await _videoPlayerController?.stream.buffer.first.timeout(
+          const Duration(milliseconds: 500),
+          onTimeout: () => Duration.zero,
+        );
       }
       danmakuController?.clear();
       try {
@@ -1399,7 +1404,7 @@ class PlPlayerController with BlockConfigMixin {
     }
 
     if (duration.value != 0) {
-      seek();
+      await seek();
     } else {
       // if (kDebugMode) debugPrint('seek duration else');
       _subForSeek?.cancel();
