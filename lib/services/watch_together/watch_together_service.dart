@@ -70,6 +70,14 @@ class WatchTogetherService {
   bool _ticking = false;
   WtTarget? _currentTarget;
   bool _lastReportedLoading = false;
+
+  /// Start of the player's current continuous buffering run (server-clock
+  /// seconds). A member whose player stays stuck loading longer than
+  /// [_loadingReportCapSeconds] stops reporting isLoading — it keeps
+  /// retrying locally but no longer deadlocks the room barrier. The
+  /// server enforces a longer backstop for old/buggy clients.
+  double? _loadingSince;
+  static const _loadingReportCapSeconds = 20.0;
   double _lastMemberReport = -double.infinity;
   double _lastOtherHostToast = -double.infinity;
   final _memberCoordinator = WtMemberCoordinator();
@@ -342,14 +350,29 @@ class WatchTogetherService {
     final now = clock?.call() ?? client.timeSync.now();
     if (now - _lastMemberReport < 2.0) return;
     _lastMemberReport = now;
-    final loading =
-        player.hasPlayer && !player.isLive && player.isBuffering;
+    final loading = _effectiveLoading(now);
     _lastReportedLoading = loading;
     client.updateMember(loading, target: _detectTarget());
   }
 
-  void _reportLoading([bool? forced]) {
-    final loading = forced ?? player.isBuffering;
+  /// Maps the player's raw buffering flag to the reported loading state.
+  /// Caps a continuous buffering run at [_loadingReportCapSeconds]: a
+  /// member whose player never finishes loading (dead network, failed
+  /// source) releases the room's barrier instead of stalling the host
+  /// forever. The run timer resets whenever buffering actually clears.
+  bool _effectiveLoading(double now) {
+    final raw = player.hasPlayer && !player.isLive && player.isBuffering;
+    if (!raw) {
+      _loadingSince = null;
+      return false;
+    }
+    final since = _loadingSince ??= now;
+    return now - since <= _loadingReportCapSeconds;
+  }
+
+  void _reportLoading([bool? _]) {
+    final now = clock?.call() ?? client.timeSync.now();
+    final loading = _effectiveLoading(now);
     if (loading != _lastReportedLoading) {
       _lastReportedLoading = loading;
       client.updateMember(loading, target: _detectTarget());
@@ -366,6 +389,7 @@ class WatchTogetherService {
         // the next heartbeat to re-report the current loading state.
         _lastReportedLoading = false;
         _lastMemberReport = -double.infinity;
+        _loadingSince = null;
         SmartDialog.showToast(event.isHost ? '房间已创建' : '已加入房间');
         if (role.value.isMember && event.room.playback.target != null) {
           _currentTarget = event.room.playback.target;
@@ -471,10 +495,14 @@ class WatchTogetherService {
   }
 
   void _executeNavigate(WtTarget target) {
-    // When the member is sitting on the watch-together room page, push
-    // without replacing it — off:true would pop the room page and with it
-    // the call controls (mute/hang-up).
-    final off = Get.currentRoute != '/watchTogether';
+    // Only replace a page that IS a watch target. off:true on any other
+    // route pops it — and popping '/' disposes MainPage, whose dispose()
+    // calls GStorage.close(): every Hive box closes, the video detail
+    // page dies half-loaded (title/uploader from arguments survive,
+    // comments/settings reads throw) and the logger's own box read loops
+    // the app into a black screen.
+    final route = Get.currentRoute;
+    final off = route == '/videoV' || route == '/liveRoom';
     if (target.isLive) {
       PageUtils.toLiveRoom(target.roomId, off: off);
     } else if (target.bvid != null) {
@@ -564,6 +592,7 @@ class WatchTogetherService {
     _lastReportedLoading = false;
     _lastMemberReport = -double.infinity;
     _lastOtherHostToast = -double.infinity;
+    _loadingSince = null;
     _memberCoordinator.reset();
     debugLog.clear();
     call.reset();

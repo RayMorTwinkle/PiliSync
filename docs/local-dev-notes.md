@@ -46,6 +46,18 @@ done
 3. `dart:io` WebSocket：文本帧回调给 `String`，二进制帧才给 `List<int>`。
 4. flutter_test 的 binding 会 mock HttpClient → 对时只能走 WS `tsync`。
 
+## macOS / Android 构建坑
+
+1. **JDK 必须用 21**：JDK 26 会在 `JdkImageTransform` 上挂掉。
+   `export JAVA_HOME=/opt/homebrew/Cellar/openjdk@21/21.0.12.1/libexec/openjdk.jdk/Contents/Home`
+2. **macOS 必须关掉 SPM**：`flutter_webrtc` 在 SwiftPM 路径下编译不出
+   `FlutterEventSink`/`FlutterPlugin`（插件头文件找不到 FlutterMacOS）。已用
+   `fvm flutter config --no-enable-swift-package-manager` 全局禁用，
+   全部插件走 CocoaPods（pod 1.17.0 在 `~/.local/bin`）。
+3. **connectivity_plus 已 pin 7.0.0**（pubspec `dependency_overrides`）：
+   7.1.0+ 无条件调用 `NWPath.isUltraConstrained`，需要 macOS 26 SDK，
+   本机 Xcode 16.2 / SDK 15.2 编不过。升级 Xcode 26 后可以解除。
+
 ## 一起看调试流程
 
 ```bash

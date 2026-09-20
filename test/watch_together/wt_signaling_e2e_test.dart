@@ -95,13 +95,17 @@ void main() {
     expect(nav.target.bvid, 'BV1test');
     expect(nav.target.cid, 99);
 
-    member.updateMember(true);
+    member.updateMember(
+      true,
+      target: const WtTarget(type: 'video', bvid: 'BV1test', cid: 99),
+    );
     final mu = await waitForEvent<WtMemberUpdateEvent>(
       hostEvents,
       const Duration(seconds: 3),
     );
     expect(mu.isLoading, isTrue);
-    expect(mu.waitForLoadding, isTrue);
+    expect(mu.waitForLoadding, isTrue,
+        reason: 'hostEvents=${hostEvents.map((e) => e.toString()).toList()}');
 
     await hostSub.cancel();
     await memberSub.cancel();

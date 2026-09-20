@@ -89,7 +89,9 @@ class WtDebugServer {
         bvid: bvid,
         cid: cid,
         title: q['title'] ?? '',
-        off: true,
+        // off:true on '/' pops MainPage → dispose() closes every Hive box
+        // → half-loaded detail page + logger crash loop. Push instead.
+        off: Get.currentRoute == '/videoV',
       );
       return 'navigating $bvid';
     }
@@ -116,7 +118,7 @@ class WtDebugServer {
     if (path == '/navigateLive') {
       final roomId = int.tryParse(q['roomId'] ?? '');
       if (roomId == null) return 'missing roomId';
-      PageUtils.toLiveRoom(roomId, off: true);
+      PageUtils.toLiveRoom(roomId, off: Get.currentRoute == '/liveRoom');
       return 'navigating live $roomId';
     }
     return 'unknown path $path';

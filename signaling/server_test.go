@@ -539,3 +539,60 @@ func TestICEServersRelaysCloudflare(t *testing.T) {
 		t.Fatalf("urls not relayed: %v", turn["urls"])
 	}
 }
+
+// A member that reports isLoading forever must not deadlock the room: the
+// barrier only honours a loading flag younger than maxMemberLoadingWait.
+func TestLoadingWaitExpires(t *testing.T) {
+	defer func(orig time.Duration) { maxMemberLoadingWait = orig }(maxMemberLoadingWait)
+	maxMemberLoadingWait = 80 * time.Millisecond
+	srv := startTestServer(t)
+	defer srv.Close()
+
+	host := dial(t, srv)
+	defer host.Close()
+	member := dial(t, srv)
+	defer member.Close()
+
+	send(host, updateMsg("r1", "pw1", "hostA", 10))
+	waitFor(t, host, "update_ack", 2*time.Second)
+	send(member, map[string]any{"type": "join", "room": "r1", "password": "pw1", "tempUser": "memB"})
+	waitFor(t, member, "joined", 2*time.Second)
+	waitFor(t, host, "peer_joined", 2*time.Second)
+
+	send(member, map[string]any{
+		"type": "update_member", "room": "r1", "password": "pw1", "tempUser": "memB",
+		"isLoading": true,
+	})
+	if mu := waitFor(t, host, "member_update", 2*time.Second); mu["waitForLoadding"] != true {
+		t.Fatalf("fresh loading should hold the barrier")
+	}
+	_ = waitFor(t, member, "member_update", 2*time.Second) // drain echo
+
+	time.Sleep(150 * time.Millisecond) // past the TTL
+
+	// Re-sending the same flag is not a false→true transition, so
+	// LoadingSince is not refreshed: the stale flag must now be ignored.
+	send(member, map[string]any{
+		"type": "update_member", "room": "r1", "password": "pw1", "tempUser": "memB",
+		"isLoading": true,
+	})
+	if mu := waitFor(t, host, "member_update", 2*time.Second); mu["waitForLoadding"] != false {
+		t.Fatalf("stale loading must release the barrier")
+	}
+	_ = waitFor(t, member, "member_update", 2*time.Second)
+
+	// A genuine false→true transition starts a fresh window.
+	send(member, map[string]any{
+		"type": "update_member", "room": "r1", "password": "pw1", "tempUser": "memB",
+		"isLoading": false,
+	})
+	_ = waitFor(t, host, "member_update", 2*time.Second)
+	_ = waitFor(t, member, "member_update", 2*time.Second)
+	send(member, map[string]any{
+		"type": "update_member", "room": "r1", "password": "pw1", "tempUser": "memB",
+		"isLoading": true,
+	})
+	if mu := waitFor(t, host, "member_update", 2*time.Second); mu["waitForLoadding"] != true {
+		t.Fatalf("a new loading run should re-hold the barrier")
+	}
+}

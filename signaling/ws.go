@@ -425,6 +425,7 @@ func (h *Hub) handleUpdateMember(c *Client, msg *Incoming) {
 		c.sendJSON(map[string]any{"type": "error", "code": "not_in_room"})
 		return
 	}
+
 	// broadcast to everyone including the sender (VT-style): the echo
 	// doubles as the sender's ack and carries its `t` for time sampling.
 	h.broadcast(msg.Room, map[string]any{

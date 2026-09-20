@@ -52,6 +52,11 @@ type Member struct {
 	TempUser  string  `json:"tempUser"`
 	IsLoading bool    `json:"isLoading"`
 	Target    *Target `json:"-"`
+	// LoadingSince marks when IsLoading last flipped false→true. The
+	// loading barrier stops honouring the flag once it is older than
+	// maxMemberLoadingWait, so a member whose player is permanently wedged
+	// (dead network, failed source) cannot deadlock the room forever.
+	LoadingSince time.Time `json:"-"`
 }
 
 // mu guards HostId, Playback, members and seen. Never acquire Hub.mu while
@@ -85,11 +90,14 @@ func (r *Room) IsProtected() bool { return r.Password != md5hex("") }
 // page is loading, except when playback reached the end (VT: a member
 // buffering on the last frame must not stall the room).
 func (r *Room) anyoneLoadingLocked() bool {
-	if r.Playback.CurrentTime == r.Playback.Duration {
+	if r.Playback.Duration > 0 &&
+		r.Playback.CurrentTime == r.Playback.Duration {
 		return false
 	}
 	for _, m := range r.members {
-		if m.IsLoading && sameTarget(m.Target, r.Playback.Target) {
+		if m.IsLoading &&
+			time.Since(m.LoadingSince) < maxMemberLoadingWait &&
+			sameTarget(m.Target, r.Playback.Target) {
 			return true
 		}
 	}
@@ -168,6 +176,9 @@ func (r *Room) setLoading(tempUser string, isLoading bool, target *Target) bool 
 	if !ok {
 		return false
 	}
+	if isLoading && !m.IsLoading {
+		m.LoadingSince = time.Now()
+	}
 	m.IsLoading = isLoading
 	m.Target = target
 	return true
@@ -220,6 +231,10 @@ func newRoomID() string {
 var (
 	roomExpire      = 3 * time.Minute
 	cleanupInterval = 30 * time.Second
+	// maxMemberLoadingWait caps how long a member's isLoading may hold the
+	// room barrier — defense-in-depth behind the client's own give-up
+	// (~20s); covers old/buggy clients that report loading forever.
+	maxMemberLoadingWait = 60 * time.Second
 )
 
 type RoomStore struct {

@@ -167,6 +167,37 @@
 
 ---
 
+## F10 · 真机实测轮（2026-09-20，TCL T508N × gnirehtet × wt.raymor.top）
+
+用户报告：「语音正常；房主打开视频点播放立刻被暂停；成员只见标题/UP 主，视频、评论等全挂；一起看入口藏太深」。
+
+### 新发现并修复
+
+| # | 问题 | 位置 | 修法 | 验收 |
+|---|---|---|---|---|
+| F10-a | **navigate `off:true` 销毁 MainPage → `GStorage.close()` 关掉全部 Hive box** → 详情页只有路由参数（标题/UP 主）能显示，评论/设置读全炸；日志器 `Pref.enableLog` 读已关 box 再抛异常 → Catcher2↔Hive 崩溃循环 → 黑屏。这就是「成员只能看到标题和发布人」的根因 | `watch_together_service.dart _executeNavigate`；`main/view.dart:138 dispose→GStorage.close()` | `off` 仅在当前页本身是观看目标（`/videoV`/`/liveRoom`）时为 true；`Pref.enableLog` 加 try/catch 防崩溃循环；debug server `/navigate`/`/navigateLive` 同步修 | 真机：成员进房 navigate 后详情页完整渲染（封面+评论数+UP 主+相关推荐全出），无黑屏无 HiveError |
+| F10-b | **成员 `isBuffering` 永真 → 房主 `waitForLoadding` 永久锁死**（点播放立刻被屏障暂停）。`PlPlayerController.isBuffering` 默认 true，播放器起不来时永远不清 | `wt_member_coordinator` 上报；`room.go anyoneLoadingLocked` | 客户端连续缓冲 20s 停止上报 loading（本地仍重试）；服务端 60s TTL 兜底清陈旧 loading；顺带修 `duration==0` 时片尾豁免误触发 | 真机：成员卡住 60s+ 后服务端屏障自动释放（wait true→false）；单测双端覆盖 |
+| F10-c | **悬浮面板 `Positioned` 夹在 `LayoutBuilder` 里 → ParentData 断链**，`Incorrect use of ParentDataWidget` 每帧刷屏，面板退化到 Stack 默认左上角 | `floating_panel.dart` | 撤掉 LayoutBuilder，尺寸改取 `MediaQuery.sizeOf`；新增显式「收起到右缘」按钮（拖拽越过阈值在 216px 卡上很难触发）；无 tooltip（Navigator 之上无 Overlay 祖先） | 真机：面板正常渲染于右下，可拖拽、无红屏、无异常刷屏 |
+| F10-d | gnirehtet watchdog `setsid` 在 macOS 不存在 → `nohup` 退化版仍被 launchd **进程组回收** → relay 每 30s spawn→被杀循环，隧道 TCP 全断 → 成员 WSS 秒掉 | ServerX `relay-watchdog/gnirehtet-relay-watchdog.sh` | 无 setsid 时走 `perl -MPOSIX=setsid` 派生新会话（真脱进程组） | 修复后 java relay 跨多轮 watchdog 存活（>70s），隧道不再周期性全断 |
+| F10-e | **收编恢复复用屏外坐标** → 边条恢复后卡片留在屏外看不见 | `floating_panel.dart onPanEnd` | 收编时把 `_pos` 改写为贴边后的合法坐标（`Offset(_edge,dy)` / `Offset(w-_cardW-_edge,dy)`），边条 tap 恢复即可见 | 真机：收编→边条→恢复，卡片出现在右缘原位 |
+| F10-f | **`isInPipMode` 是普通 static bool**，在 `Obx` 里读不注册依赖 → 进/出 PiP 面板不刷新 | `floating_panel.dart` | 并入已有 400ms `_routeTimer` 轮询 `_inPip` | analyze 通过 |
+| F10-g | 收编按钮永远收右缘 + 边条 `top` 未按 92px 高度 clamp → 卡片在左半屏收右缘绕远 / 拖到底部收编后边条半截出屏 | `floating_panel.dart` | 按钮按 `_nearerLeft` 就近收编（图标方向跟随）；边条 `top` clamp `[0, h-96]`；收编时 dy 同步 clamp | 真机：右半屏卡片点「›」收右缘、边条恢复均正常 |
+| F10-h | macOS 构建两坑：`flutter_webrtc` 在 SwiftPM 路径下编不出（`FlutterEventSink` 等类型不可见）；`connectivity_plus 7.1+` 无条件调 `NWPath.isUltraConstrained` 需 macOS 26 SDK（本机 Xcode 16.2/SDK 15.2） | 构建环境 + `pubspec.yaml` | `flutter config --no-enable-swift-package-manager`（全局，非仓库改动）；`dependency_overrides: connectivity_plus: 7.0.0`（注释说明可解除条件） | `flutter build macos --debug` 成功产出 PiliSync.app；`local-dev-notes.md` 已记录 |
+
+### 实测环境
+
+- TCL T508N（无 SIM/无 WiFi）经 gnirehtet USB 反向上网（`tun0 10.0.0.2`，ServerX `DEVICES/tcl-phone/`）；`adb forward tcp:9922 tcp:9911` 接 debug server；`tool/wt_host_driver.dart` 在公网 `wss://wt.raymor.top` 扮演房主。
+- macOS debug 包（`flutter build macos --debug`）同机做第二端：debug server 占 `127.0.0.1:9911`，可建房/进房/跟随导航；面板右下角固定已截图验证。**注意**：桌面端 debug server 与 adb forward 会抢 9911——手机用 9922 转发隔离。
+- 已验证：WSS 穿透隧道建房/进房/对时/navigate/member_update 全通；详情页修复后完整加载；屏障释放端到端生效（macOS 成员走公网生产服务器验证 wait true→false）；面板收编→边条→恢复全链路真机通过。
+- **环境限制**：隧道 DNS 对 `bilivideo.com` CDN 域名间歇性 `unknown host`（api.bilibili.com 正常），视频流本身起不来——属隧道环境问题非功能缺陷；真实播放需在正常网络的设备上复验。macOS 桌面截图走 `cua-driver call get_desktop_state`（系统 screencapture 无录屏权限只出壁纸）。
+
+### 悬浮面板交互（`floating_panel.dart`，挂 `main.dart _builder` 根 Stack）
+
+- 移动端：自由拖拽、松手吸附近侧边缘、推过阈值或点「‹/›」按就近侧收编成 30px 边缘条（点按恢复）；全屏/PiP/房间页自动隐藏。
+- 桌面端：固定右下角（`Positioned right/bottom:10`），置顶于应用内容之上。
+
+---
+
 ## 验收总闸
 
 - `cd signaling && go vet ./... && go test -race -count=1 ./...` 全绿

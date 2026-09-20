@@ -1109,8 +1109,15 @@ abstract final class Pref {
         .join('|');
   }
 
-  static bool get enableLog =>
-      _setting.get(SettingBoxKey.enableLog, defaultValue: true);
+  // The logger reads this inside error handlers — a closed box must
+  // degrade silently instead of throwing into a crash loop.
+  static bool get enableLog {
+    try {
+      return _setting.get(SettingBoxKey.enableLog, defaultValue: true);
+    } catch (_) {
+      return true;
+    }
+  }
 
   static bool get disableAudioCDN =>
       _setting.get(SettingBoxKey.disableAudioCDN, defaultValue: false);
