@@ -1,4 +1,5 @@
 import 'dart:async';
+import 'dart:io' show Platform;
 
 import 'package:flutter/foundation.dart';
 import 'package:flutter_webrtc/flutter_webrtc.dart' as fwr;
@@ -6,6 +7,7 @@ import 'package:get/get.dart' hide navigator;
 
 import 'package:PiliPlus/services/watch_together/wt_models.dart';
 import 'package:PiliPlus/services/watch_together/wt_signaling_client.dart';
+import 'package:PiliPlus/utils/permission_handler.dart';
 import 'package:PiliPlus/utils/storage.dart';
 import 'package:PiliPlus/utils/storage_key.dart';
 
@@ -153,7 +155,8 @@ class WtCallManager {
       if (!_sendSignal({'kind': 'offer', 'sdp': offer.sdp})) {
         throw StateError('offer dropped: socket not open');
       }
-    } catch (_) {
+    } catch (e) {
+      debugPrint('WT_CALL start failed: $e');
       _teardown();
       _state.value = WtCallState.failed;
     }
@@ -171,6 +174,14 @@ class WtCallManager {
   }
 
   Future<void> _getMic() async {
+    // Android: RECORD_AUDIO is a runtime permission — getUserMedia throws
+    // without it and the first call on a fresh install always failed.
+    if (!kIsWeb && Platform.isAndroid) {
+      final status = await Permission.microphone.request();
+      if (!status.isGranted) {
+        throw StateError('microphone permission denied');
+      }
+    }
     _localStream = await fwr.navigator.mediaDevices.getUserMedia({
       'audio': true,
       'video': false,
@@ -178,7 +189,11 @@ class WtCallManager {
     for (final track in _localStream!.getTracks()) {
       await _pc?.addTrack(track, _localStream!);
     }
-    await fwr.Helper.setSpeakerphoneOn(_speakerOn.value);
+    // Speakerphone routing is a mobile-only concept — the plugin channel
+    // is unimplemented on desktop and throws MissingPluginException.
+    if (!kIsWeb && (Platform.isAndroid || Platform.isIOS)) {
+      await fwr.Helper.setSpeakerphoneOn(_speakerOn.value);
+    }
     _startVoiceGate();
   }
 
@@ -293,7 +308,7 @@ class WtCallManager {
     }
   }
 
-  @visibleForTesting
+  // Read by tests and the debug control plane's /status snapshot.
   bool get gateOpenForTesting => _gateOpen;
 
   @visibleForTesting
@@ -409,7 +424,8 @@ class WtCallManager {
             throw StateError('answer dropped: socket not open');
           }
           await _flushCandidates();
-        } catch (_) {
+        } catch (e) {
+          debugPrint('WT_CALL answer failed: $e');
           _teardown();
           _state.value = WtCallState.failed;
         }
@@ -509,7 +525,9 @@ class WtCallManager {
 
   Future<void> toggleSpeaker() async {
     _speakerOn.value = !_speakerOn.value;
-    await fwr.Helper.setSpeakerphoneOn(_speakerOn.value);
+    if (!kIsWeb && (Platform.isAndroid || Platform.isIOS)) {
+      await fwr.Helper.setSpeakerphoneOn(_speakerOn.value);
+    }
   }
 
   /// Returns false when the signal could not be sent (no bound peer or

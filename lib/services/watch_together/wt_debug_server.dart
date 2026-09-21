@@ -2,11 +2,13 @@ import 'dart:async';
 import 'dart:convert';
 import 'dart:io';
 
+import 'package:PiliPlus/pages/video/controller.dart';
+import 'package:PiliPlus/plugin/pl_player/controller.dart';
 import 'package:PiliPlus/services/watch_together/watch_together_service.dart';
+import 'package:PiliPlus/services/watch_together/wt_player_adapter.dart';
 import 'package:PiliPlus/utils/page_utils.dart';
 import 'package:flutter/foundation.dart';
-import 'package:get/get_core/src/get_main.dart';
-import 'package:get/get_navigation/src/extension_navigation.dart';
+import 'package:get/get.dart';
 
 /// Debug-only control plane (kDebugMode builds): lets an external test
 /// driver drive the watch-together feature and read full app state via
@@ -96,6 +98,20 @@ class WtDebugServer {
       return 'navigating $bvid';
     }
     if (path == '/play') {
+      // With autoplay off the engine only exists after a user tap on the
+      // cover — replicate that tap via playerInit so /play is not a no-op.
+      final p = svc.player;
+      if (p is PlPlayerAdapter &&
+          PlPlayerController.instance?.videoPlayerController == null) {
+        final tag = (Get.arguments as Map?)?['heroTag'];
+        final vdc = tag != null && Get.isRegistered<VideoDetailController>(tag: tag)
+            ? Get.find<VideoDetailController>(tag: tag)
+            : null;
+        if (vdc != null) {
+          unawaited(vdc.playerInit(autoplay: true));
+          return 'playerInit triggered';
+        }
+      }
       await svc.player.play().timeout(const Duration(seconds: 3));
       return 'play sent';
     }
@@ -114,6 +130,46 @@ class WtDebugServer {
       if (v == null) return 'missing v';
       await svc.player.setSpeed(v).timeout(const Duration(seconds: 3));
       return 'speed $v';
+    }
+    if (path == '/back') {
+      Get.back();
+      return 'back -> ${Get.currentRoute}';
+    }
+    if (path == '/call/start') {
+      unawaited(svc.call.start(q['peer'] ?? 'peer'));
+      return 'call starting';
+    }
+    if (path == '/call/hangup') {
+      unawaited(svc.call.hangUp());
+      return 'hangup';
+    }
+    if (path == '/call/mic') {
+      svc.call.toggleMic();
+      return 'micMuted=${svc.call.micMuted}';
+    }
+    if (path == '/call/gate') {
+      final v = double.tryParse(q['v'] ?? '');
+      if (v == null) return 'missing v';
+      svc.call.gateThresholdValue = v;
+      return 'gate=$v';
+    }
+    if (path == '/call/vol') {
+      final v = double.tryParse(q['v'] ?? '');
+      if (v == null) return 'missing v';
+      svc.call.remoteVolumeValue = v;
+      return 'vol=$v';
+    }
+    if (path == '/wt/loose') {
+      final v = q['v'];
+      if (v == null) return 'missing v';
+      svc.looseSyncEnabled = v == '1';
+      return 'loose=${svc.looseSync.value}';
+    }
+    if (path == '/wt/hostPriority') {
+      final v = q['v'];
+      if (v == null) return 'missing v';
+      svc.hostPriorityEnabled = v == '1';
+      return 'hostPriority=${svc.hostPriority.value}';
     }
     if (path == '/navigateLive') {
       final roomId = int.tryParse(q['roomId'] ?? '');
@@ -171,6 +227,10 @@ class WtDebugServer {
       'call': {
         'state': svc.call.state.name,
         'micMuted': svc.call.micMuted,
+        'micLevel': svc.call.micLevel.value,
+        'gate': svc.call.gateThreshold.value,
+        'gateOpen': svc.call.gateOpenForTesting,
+        'remoteVol': svc.call.remoteVolume.value,
       },
       'logs': svc.debugLog
           .take(30)
