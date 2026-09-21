@@ -6,6 +6,8 @@ import 'package:get/get.dart' hide navigator;
 
 import 'package:PiliPlus/services/watch_together/wt_models.dart';
 import 'package:PiliPlus/services/watch_together/wt_signaling_client.dart';
+import 'package:PiliPlus/utils/storage.dart';
+import 'package:PiliPlus/utils/storage_key.dart';
 
 enum WtCallState { idle, calling, connected, failed }
 
@@ -15,6 +17,35 @@ class WtCallManager {
   final _state = WtCallState.idle.obs;
   final _micMuted = false.obs;
   final _speakerOn = true.obs;
+  // Live mic level (0..1) from outbound RTP stats — drives the UI meter.
+  final micLevel = 0.0.obs;
+  // Voice gate threshold (0 = off). Below it the audio track is disabled
+  // entirely — not just attenuated — so quiet noise is never transmitted.
+  // Lazy: GStorage is not ready at singleton construction.
+  RxDouble? _gateRx;
+  RxDouble get gateThreshold => _gateRx ??= RxDouble(_readGatePref());
+  bool _gateOpen = true;
+  Timer? _gateTimer;
+
+  double _readGatePref() {
+    try {
+      return (GStorage.setting.get(SettingBoxKey.wtVoiceGate,
+              defaultValue: 0.0)
+              as num?)
+          ?.toDouble() ??
+          0.0;
+    } catch (_) {
+      return 0.0;
+    }
+  }
+
+  set gateThresholdValue(double v) {
+    gateThreshold.value = v;
+    try {
+      GStorage.setting.put(SettingBoxKey.wtVoiceGate, v);
+    } catch (_) {}
+    _applyMicEnabled();
+  }
 
   fwr.RTCPeerConnection? _pc;
   fwr.MediaStream? _localStream;
@@ -114,7 +145,63 @@ class WtCallManager {
       await _pc?.addTrack(track, _localStream!);
     }
     await fwr.Helper.setSpeakerphoneOn(_speakerOn.value);
+    _startVoiceGate();
   }
+
+  /// Poll outbound RTP stats for the mic's audioLevel and gate the track:
+  /// below the threshold the track is disabled (nothing is transmitted).
+  /// Hysteresis (close at 0.6× the open threshold) avoids flapping on
+  /// borderline levels.
+  void _startVoiceGate() {
+    _gateTimer?.cancel();
+    _gateTimer = Timer.periodic(const Duration(milliseconds: 250), (_) async {
+      final pc = _pc;
+      if (pc == null) return;
+      try {
+        final stats = await pc.getStats();
+        for (final r in stats) {
+          final v = r.values;
+          final isAudioSource = r.type == 'media-source' ||
+              (r.type == 'outbound-rtp' &&
+                  (v['kind'] == 'audio' || v['mediaType'] == 'audio'));
+          if (!isAudioSource) continue;
+          final level = (v['audioLevel'] as num?)?.toDouble();
+          if (level == null) continue;
+          micLevel.value = level;
+          _onMicLevel(level);
+          break;
+        }
+      } catch (_) {}
+    });
+  }
+
+  void _onMicLevel(double level) {
+    final t = gateThreshold.value;
+    if (t <= 0) {
+      if (!_gateOpen) {
+        _gateOpen = true;
+        _applyMicEnabled();
+      }
+      return;
+    }
+    final open = _gateOpen ? level >= t * 0.6 : level >= t;
+    if (open != _gateOpen) {
+      _gateOpen = open;
+      _applyMicEnabled();
+    }
+  }
+
+  void _applyMicEnabled() {
+    for (final track in _localStream?.getAudioTracks() ?? []) {
+      track.enabled = !_micMuted.value && _gateOpen;
+    }
+  }
+
+  @visibleForTesting
+  bool get gateOpenForTesting => _gateOpen;
+
+  @visibleForTesting
+  void onMicLevelForTesting(double level) => _onMicLevel(level);
 
   Future<void> _createPeer() async {
     _hasRemoteDescription = false;
@@ -276,6 +363,10 @@ class WtCallManager {
   void _teardown() {
     _answerTimer?.cancel();
     _answerTimer = null;
+    _gateTimer?.cancel();
+    _gateTimer = null;
+    _gateOpen = true;
+    micLevel.value = 0;
     _localStream?.getTracks().forEach((t) => t.stop());
     _localStream?.dispose();
     _localStream = null;
@@ -314,9 +405,7 @@ class WtCallManager {
 
   void toggleMic() {
     _micMuted.value = !_micMuted.value;
-    for (final track in _localStream?.getAudioTracks() ?? []) {
-      track.enabled = !_micMuted.value;
-    }
+    _applyMicEnabled();
   }
 
   Future<void> toggleSpeaker() async {

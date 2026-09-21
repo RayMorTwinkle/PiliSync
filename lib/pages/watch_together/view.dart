@@ -372,6 +372,49 @@ class _WatchTogetherPageState extends State<WatchTogetherPage> {
                 ),
               ],
             ),
+            const SizedBox(height: 8),
+            // Voice gate: quiet sounds below the threshold are not
+            // transmitted. 0 = off. The meter shows live mic level.
+            Padding(
+              padding: const EdgeInsets.symmetric(horizontal: 16),
+              child: Column(
+                children: [
+                  Row(
+                    children: [
+                      Text('语音阈值', style: Theme.of(context).textTheme.bodySmall),
+                      Expanded(
+                        child: Obx(
+                          () => Slider(
+                            value: call.gateThreshold.value.clamp(0.0, 0.3),
+                            max: 0.3,
+                            divisions: 30,
+                            label: call.gateThreshold.value <= 0
+                                ? '关闭'
+                                : call.gateThreshold.value
+                                    .toStringAsFixed(2),
+                            onChanged: (v) => call.gateThresholdValue = v,
+                          ),
+                        ),
+                      ),
+                      Obx(
+                        () => Text(
+                          call.gateThreshold.value <= 0
+                              ? '关'
+                              : call.gateThreshold.value.toStringAsFixed(2),
+                          style: Theme.of(context).textTheme.bodySmall,
+                        ),
+                      ),
+                    ],
+                  ),
+                  Obx(
+                    () => LinearProgressIndicator(
+                      value: call.micLevel.value.clamp(0.0, 1.0),
+                      minHeight: 3,
+                    ),
+                  ),
+                ],
+              ),
+            ),
           ],
         ],
       );

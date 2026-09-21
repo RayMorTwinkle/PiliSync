@@ -23,6 +23,7 @@ import 'package:PiliPlus/utils/storage_pref.dart';
 import 'package:PiliPlus/utils/update.dart';
 import 'package:collection/collection.dart';
 import 'package:easy_debounce/easy_throttle.dart';
+import 'package:flutter_smart_dialog/flutter_smart_dialog.dart';
 import 'package:get/get.dart';
 import 'package:material_ui/material_ui.dart';
 
@@ -119,6 +120,50 @@ class MainController extends GetxController
         queryUnreadMsg();
       }
     }
+
+    _maybeShowWelcome();
+  }
+
+  /// One-shot first-run welcome: introduces the fork and the Watch
+  /// Together feature. Flagged in GStorage so it never shows again.
+  void _maybeShowWelcome() {
+    if (GStorage.setting.get(SettingBoxKey.wtWelcomed, defaultValue: false) ==
+        true) {
+      return;
+    }
+    GStorage.setting.put(SettingBoxKey.wtWelcomed, true);
+    WidgetsBinding.instance.addPostFrameCallback((_) {
+      SmartDialog.show(
+        builder: (context) => AlertDialog(
+          title: const Text('欢迎使用 PiliSync'),
+          content: const Text(
+            '本应用由 RayMor Fork 并增强，新增「一起看」功能：\n'
+            '和好友同步进度看视频，支持语音通话。\n\n'
+            '入口在「我的」页右上角图标，或设置页面。',
+          ),
+          actions: [
+            const TextButton(
+              onPressed: SmartDialog.dismiss,
+              child: Text('先看看'),
+            ),
+            TextButton(
+              onPressed: () {
+                SmartDialog.dismiss();
+                Get.toNamed('/loginPage');
+              },
+              child: const Text('先登录'),
+            ),
+            FilledButton(
+              onPressed: () {
+                SmartDialog.dismiss();
+                Get.toNamed('/watchTogether');
+              },
+              child: const Text('打开一起看'),
+            ),
+          ],
+        ),
+      );
+    });
   }
 
   Future<int> _msgUnread() async {

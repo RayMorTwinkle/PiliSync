@@ -13,6 +13,7 @@ import 'package:PiliPlus/services/watch_together/wt_member_coordinator.dart';
 import 'package:PiliPlus/services/watch_together/wt_sync_logic.dart';
 import 'package:PiliPlus/utils/page_utils.dart';
 import 'package:PiliPlus/utils/storage.dart';
+import 'package:PiliPlus/utils/storage_key.dart';
 import 'package:flutter_smart_dialog/flutter_smart_dialog.dart';
 import 'package:material_ui/material_ui.dart';
 import 'package:get/get.dart';
@@ -147,7 +148,8 @@ class WatchTogetherService {
   // fall back to the default rather than crashing the tick.
   bool _readLooseSync() {
     try {
-      return GStorage.setting.get('wtLooseSync', defaultValue: true)
+      return GStorage.setting.get(SettingBoxKey.wtLooseSync,
+          defaultValue: true)
               as bool? ??
           true;
     } catch (_) {
@@ -158,7 +160,7 @@ class WatchTogetherService {
   set looseSyncEnabled(bool v) {
     looseSync.value = v;
     try {
-      GStorage.setting.put('wtLooseSync', v);
+      GStorage.setting.put(SettingBoxKey.wtLooseSync, v);
     } catch (_) {}
   }
 

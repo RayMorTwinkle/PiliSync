@@ -321,6 +321,10 @@ abstract final class SettingBoxKey {
       appFont = 'appFont',
       customAppFont = 'customAppFont',
       customAppFontNames = 'customAppFontNames';
+
+  static const String wtLooseSync = 'wtLooseSync',
+      wtVoiceGate = 'wtVoiceGate',
+      wtWelcomed = 'wtWelcomed';
 }
 
 abstract final class LocalCacheKey {

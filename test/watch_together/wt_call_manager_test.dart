@@ -133,4 +133,41 @@ void main() {
     expect(call.state, WtCallState.idle);
     expect(client.signals.single.payload['kind'], 'bye');
   });
+group('voice gate', () {
+  test('threshold 0 keeps the gate always open', () {
+    final call = WtCallManager();
+    call.gateThresholdValue = 0;
+    call.onMicLevelForTesting(0.0);
+    expect(call.gateOpenForTesting, isTrue);
+    call.onMicLevelForTesting(0.001);
+    expect(call.gateOpenForTesting, isTrue);
+  });
+
+  test('gate closes below threshold and reopens above it', () {
+    final call = WtCallManager();
+    call.gateThresholdValue = 0.1;
+    call.onMicLevelForTesting(0.05);
+    expect(call.gateOpenForTesting, isFalse);
+    // Hysteresis: still closed at 0.08 (between 0.06 close and 0.1 open).
+    call.onMicLevelForTesting(0.08);
+    expect(call.gateOpenForTesting, isFalse);
+    call.onMicLevelForTesting(0.15);
+    expect(call.gateOpenForTesting, isTrue);
+    // Hysteresis: stays open until below 0.6 * threshold.
+    call.onMicLevelForTesting(0.07);
+    expect(call.gateOpenForTesting, isTrue);
+    call.onMicLevelForTesting(0.02);
+    expect(call.gateOpenForTesting, isFalse);
+  });
+
+  test('lowering the threshold to 0 while closed reopens the gate', () {
+    final call = WtCallManager();
+    call.gateThresholdValue = 0.1;
+    call.onMicLevelForTesting(0.01);
+    expect(call.gateOpenForTesting, isFalse);
+    call.gateThresholdValue = 0;
+    call.onMicLevelForTesting(0.0);
+    expect(call.gateOpenForTesting, isTrue);
+  });
+});
 }
