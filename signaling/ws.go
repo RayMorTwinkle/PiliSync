@@ -583,14 +583,12 @@ func (h *Hub) handleNavigate(c *Client, msg *Incoming) {
 		c.sendJSON(map[string]any{"type": "error", "code": "not_in_room"})
 		return
 	}
-	if msg.Target == nil {
-		c.sendJSON(map[string]any{"type": "error", "code": "missing_target"})
-		return
-	}
 	if !room.IsHost(msg.TempUser) {
 		c.sendJSON(map[string]any{"type": "error", "code": "host_only"})
 		return
 	}
+	// A nil target means the host left the video page entirely — clear
+	// the room target so members pop back off the stale video route.
 	room.mu.Lock()
 	room.setTargetLocked(msg.Target)
 	room.mu.Unlock()
@@ -600,7 +598,7 @@ func (h *Hub) handleNavigate(c *Client, msg *Incoming) {
 		"target":          msg.Target,
 		"waitForLoadding": room.anyoneLoading(),
 	}, c)
-	log.Printf("[navigate] room=%s target=%+v", room.Name, *msg.Target)
+	log.Printf("[navigate] room=%s target=%+v", room.Name, msg.Target)
 }
 
 func (h *Hub) handleWebRTC(c *Client, msg *Incoming) {

@@ -179,7 +179,9 @@ class WtMemberUpdateEvent extends WtEvent {
 
 class WtNavigateEvent extends WtEvent {
   final String from;
-  final WtTarget target;
+  // Null means the host left the video page entirely — members should
+  // pop back off the video route rather than stay on a stale target.
+  final WtTarget? target;
   // Server broadcasts the recomputed barrier with the navigate so the
   // room does not sit behind a stale waitForLoadding until the next tick.
   final bool? waitForLoadding;

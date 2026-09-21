@@ -72,6 +72,7 @@ class _WtFloatingPanelState extends State<WtFloatingPanel> {
       final fullScreen =
           PlPlayerController.instance?.isFullScreen.value ?? false;
       final visible = inRoom &&
+          svc.floatingPanel.value &&
           _route != '/watchTogether' &&
           !fullScreen &&
           !_inPip;

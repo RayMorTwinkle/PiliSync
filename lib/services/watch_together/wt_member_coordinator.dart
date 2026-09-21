@@ -18,10 +18,16 @@ class WtMemberCoordinator {
   // room barrier) and may seek through buffering — rate-limited so a slow
   // network is not asked to refetch every tick.
   double _lastCatchupAt = -double.infinity;
+  // Loose mode far-ahead hold: a member >5s ahead of a playing room
+  // pauses and waits for the host to catch up instead of seeking back —
+  // a backwards seek flushes the buffer it just filled. Releases when the
+  // gap shrinks below _farAheadResumeSeconds.
+  bool _farAheadHold = false;
   static const _settleSeconds = 1.5;
   static const _seekLoadingSilenceSeconds = 2.0;
   static const _seekSuppressionCapSeconds = 20.0;
   static const _farBehindSeconds = 5.0;
+  static const _farAheadResumeSeconds = 2.0;
   static const _catchupIntervalSeconds = 4.0;
   late WtPlayerAdapter player;
   late void Function(String) dbg;
@@ -32,6 +38,7 @@ class WtMemberCoordinator {
     _lastSeekAt = -double.infinity;
     _loadingRunStart = null;
     _lastCatchupAt = -double.infinity;
+    _farAheadHold = false;
   }
 
   /// True while inside the post-seek silence window — a sync-issued seek
@@ -97,6 +104,14 @@ class WtMemberCoordinator {
     // garbage farBehind would wrongly mute the member's loading report.
     final farBehind =
         looseSync && !room.paused && canSeek && behind > _farBehindSeconds;
+    // Mirror of farBehind for the member that is ahead (the fast-loading
+    // side): pausing to wait beats a backwards seek that flushes the
+    // buffer and re-triggers the loading barrier.
+    if (looseSync && !room.paused && canSeek && -behind > _farBehindSeconds) {
+      _farAheadHold = true;
+    } else if (-behind < _farAheadResumeSeconds) {
+      _farAheadHold = false;
+    }
     final catchupReady =
         farBehind &&
         !isSettling &&
@@ -122,6 +137,13 @@ class WtMemberCoordinator {
       dbg('SEEK suppressed: no valid time sample');
       action = WtSyncAction(
         play: action.play,
+        playbackRate: action.playbackRate,
+      );
+    }
+    if (_farAheadHold) {
+      // Wait for the room to catch up — pause once, never seek back.
+      action = WtSyncAction(
+        play: player.isPlaying ? false : null,
         playbackRate: action.playbackRate,
       );
     }
@@ -155,9 +177,13 @@ class WtMemberCoordinator {
     // Seek-induced refills get a silence window: mpv flushes its buffer on
     // every sync seek, and reporting that dip would pause the whole room.
     // A far-behind member in loose mode stops holding the barrier — the
-    // fluent side keeps playing while this member chases.
-    final loading =
-        player.isBuffering && !inSeekSilence(now) && !farBehind;
+    // fluent side keeps playing while this member chases. A paused member
+    // never reports: paused-by-sync buffering is background refill, and a
+    // paused flag stuck true would pin the barrier and deadlock the host.
+    final loading = player.isPlaying &&
+        player.isBuffering &&
+        !inSeekSilence(now) &&
+        !farBehind;
     reportLoading(loading);
   }
 

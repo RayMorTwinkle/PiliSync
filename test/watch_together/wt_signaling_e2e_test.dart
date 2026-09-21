@@ -96,8 +96,8 @@ void main() {
       memberEvents,
       const Duration(seconds: 3),
     );
-    expect(nav.target.bvid, 'BV1test');
-    expect(nav.target.cid, 99);
+    expect(nav.target?.bvid, 'BV1test');
+    expect(nav.target?.cid, 99);
 
     member.updateMember(
       true,

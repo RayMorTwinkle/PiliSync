@@ -47,6 +47,40 @@ class WtCallManager {
     _applyMicEnabled();
   }
 
+  // Remote playback volume — the peer's voice loudness on THIS device.
+  // 1.0 = unchanged; >1 boosts on platforms whose native audio track
+  // supports gain. Lazy pref like gateThreshold.
+  RxDouble? _remoteVolRx;
+  RxDouble get remoteVolume =>
+      _remoteVolRx ??= RxDouble(_readRemoteVolPref());
+
+  double _readRemoteVolPref() {
+    try {
+      return (GStorage.setting.get(SettingBoxKey.wtRemoteVolume,
+              defaultValue: 1.0) as num?)
+          ?.toDouble() ??
+          1.0;
+    } catch (_) {
+      return 1.0;
+    }
+  }
+
+  set remoteVolumeValue(double v) {
+    remoteVolume.value = v;
+    try {
+      GStorage.setting.put(SettingBoxKey.wtRemoteVolume, v);
+    } catch (_) {}
+    _applyRemoteVolume();
+  }
+
+  void _applyRemoteVolume() {
+    for (final track in _remoteStream?.getAudioTracks() ?? []) {
+      try {
+        fwr.Helper.setVolume(remoteVolume.value, track);
+      } catch (_) {}
+    }
+  }
+
   fwr.RTCPeerConnection? _pc;
   fwr.MediaStream? _localStream;
   fwr.MediaStream? _remoteStream;
@@ -148,31 +182,93 @@ class WtCallManager {
     _startVoiceGate();
   }
 
-  /// Poll outbound RTP stats for the mic's audioLevel and gate the track:
-  /// below the threshold the track is disabled (nothing is transmitted).
-  /// Hysteresis (close at 0.6× the open threshold) avoids flapping on
-  /// borderline levels.
+  /// Poll RTP stats for the mic's audioLevel and gate the track: below
+  /// the threshold the track is disabled (nothing is transmitted).
+  ///
+  /// The capture level MUST come from `media-source` reports: they keep
+  /// reporting the real mic level even while the track is disabled.
+  /// `outbound-rtp` audioLevel measures what was SENT — reading it while
+  /// the gate is closed returns 0 forever, which is exactly the
+  /// "threshold > 0 permanently mutes one side" bug. When no
+  /// media-source report exists (platform dependent), a closed gate
+  /// briefly re-enables the track every ~2s to sample the true level.
   void _startVoiceGate() {
     _gateTimer?.cancel();
+    _probeCooldownTicks = 0;
+    _probeTicks = 0;
     _gateTimer = Timer.periodic(const Duration(milliseconds: 250), (_) async {
       final pc = _pc;
       if (pc == null) return;
       try {
         final stats = await pc.getStats();
+        double? captureLevel;
+        double? sentLevel;
         for (final r in stats) {
           final v = r.values;
-          final isAudioSource = r.type == 'media-source' ||
-              (r.type == 'outbound-rtp' &&
-                  (v['kind'] == 'audio' || v['mediaType'] == 'audio'));
-          if (!isAudioSource) continue;
-          final level = (v['audioLevel'] as num?)?.toDouble();
-          if (level == null) continue;
-          micLevel.value = level;
-          _onMicLevel(level);
-          break;
+          if (r.type == 'media-source') {
+            captureLevel ??= (v['audioLevel'] as num?)?.toDouble();
+          } else if (r.type == 'outbound-rtp' &&
+              (v['kind'] == 'audio' || v['mediaType'] == 'audio')) {
+            sentLevel ??= (v['audioLevel'] as num?)?.toDouble();
+          }
+        }
+        if (captureLevel != null) {
+          micLevel.value = captureLevel;
+          _onMicLevel(captureLevel);
+        } else if (_gateOpen) {
+          if (sentLevel != null) {
+            micLevel.value = sentLevel;
+            _onMicLevel(sentLevel);
+          }
+        } else {
+          _probeGate(sentLevel);
         }
       } catch (_) {}
     });
+  }
+
+  // Probe window while the gate is closed and no media-source stats are
+  // available: re-enable the track for ~750ms every ~2s to measure the
+  // real level. Some quiet audio leaks during the probe — the price of
+  // platforms without capture-level stats.
+  int _probeTicks = 0;
+  int _probeCooldownTicks = 0;
+  static const _probeWindowTicks = 3; // ~750ms enabled
+  static const _probeEveryTicks = 8; // ~2s cycle
+
+  void _probeGate(double? sentLevel) {
+    if (_micMuted.value) {
+      _probeTicks = 0;
+      _probeCooldownTicks = 0;
+      return;
+    }
+    if (_probeCooldownTicks > 0) {
+      _probeCooldownTicks--;
+      return;
+    }
+    _probeTicks++;
+    if (_probeTicks == 1) {
+      for (final track in _localStream?.getAudioTracks() ?? []) {
+        track.enabled = true;
+      }
+      return;
+    }
+    if (_probeTicks >= _probeWindowTicks) {
+      _probeTicks = 0;
+      if (sentLevel != null) {
+        micLevel.value = sentLevel;
+        if (sentLevel >= gateThreshold.value) {
+          _gateOpen = true;
+          _applyMicEnabled();
+          return;
+        }
+      }
+      // Still quiet (or stats silent) — re-close and wait out the cycle.
+      for (final track in _localStream?.getAudioTracks() ?? []) {
+        track.enabled = false;
+      }
+      _probeCooldownTicks = _probeEveryTicks;
+    }
   }
 
   void _onMicLevel(double level) {
@@ -212,6 +308,7 @@ class WtCallManager {
     _pc!.onTrack = (event) {
       if (event.streams.isNotEmpty) {
         _remoteStream = event.streams[0];
+        _applyRemoteVolume();
         _answerTimer?.cancel();
         _state.value = WtCallState.connected;
       }
@@ -366,6 +463,8 @@ class WtCallManager {
     _gateTimer?.cancel();
     _gateTimer = null;
     _gateOpen = true;
+    _probeTicks = 0;
+    _probeCooldownTicks = 0;
     micLevel.value = 0;
     _localStream?.getTracks().forEach((t) => t.stop());
     _localStream?.dispose();

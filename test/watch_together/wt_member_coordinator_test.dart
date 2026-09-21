@@ -318,4 +318,81 @@ void main() {
       reason: 'strict mode keeps the buffering seek exemption',
     );
   }, timeout: const Timeout(Duration(seconds: 5)));
+  test('paused member never reports loading (host deadlock guard)', () async {
+    final c = WtMemberCoordinator();
+    final player = FakePlayer()
+      ..isPlaying = false
+      ..isBuffering = true;
+    final reports = <bool>[];
+    const room = WtPlaybackState(
+      paused: true,
+      currentTime: 10,
+      duration: 120,
+      lastUpdateClientTime: 100,
+    );
+    // A member paused-by-sync whose buffering flag is stuck must not
+    // report loading — that report would pin the room barrier and
+    // deadlock the host's own load.
+    await c.tick(
+      room: room, waitForLoading: false, now: 100,
+      player: player, reportLoading: reports.add, log: (_) {},
+      looseSync: true,
+    );
+    expect(reports, [false]);
+  }, timeout: const Timeout(Duration(seconds: 5)));
+
+  test('loose mode: member >5s ahead pauses instead of seeking back', () async {
+    final c = WtMemberCoordinator();
+    final player = FakePlayer()
+      ..isPlaying = true
+      ..positionMs = 20000;
+    final reports = <bool>[];
+    const room = WtPlaybackState(
+      paused: false,
+      currentTime: 10,
+      duration: 120,
+      lastUpdateClientTime: 100,
+    );
+    var now = 100.0;
+    // Member 10s ahead of a playing room: pause and wait — a backwards
+    // seek would flush the buffer it already filled.
+    await c.tick(
+      room: room, waitForLoading: false, now: now,
+      player: player, reportLoading: reports.add, log: (_) {},
+      looseSync: true,
+    );
+    expect(player.commands, ['pause']);
+    expect(player.isPlaying, isFalse);
+    expect(player.positionMs, 20000, reason: 'no seek-back');
+    // Host catches up to within 2s — the hold releases and the member
+    // resumes in place.
+    now += 8.5; // roomRealTime ~= 18.5, ahead ~= 1.5 < resume threshold
+    await c.tick(
+      room: room, waitForLoading: false, now: now,
+      player: player, reportLoading: reports.add, log: (_) {},
+      looseSync: true,
+    );
+    expect(player.commands.last, 'play');
+    expect(player.isPlaying, isTrue);
+  }, timeout: const Timeout(Duration(seconds: 5)));
+
+  test('strict mode still seeks a far-ahead member back', () async {
+    final c = WtMemberCoordinator();
+    final player = FakePlayer()
+      ..isPlaying = true
+      ..positionMs = 20000;
+    final reports = <bool>[];
+    const room = WtPlaybackState(
+      paused: false,
+      currentTime: 10,
+      duration: 120,
+      lastUpdateClientTime: 100,
+    );
+    await c.tick(
+      room: room, waitForLoading: false, now: 100,
+      player: player, reportLoading: reports.add, log: (_) {},
+      looseSync: false,
+    );
+    expect(player.commands.any((cmd) => cmd.startsWith('seek:')), isTrue);
+  }, timeout: const Timeout(Duration(seconds: 5)));
 }

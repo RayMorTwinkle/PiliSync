@@ -209,12 +209,23 @@ class _WatchTogetherPageState extends State<WatchTogetherPage> {
           child: Padding(
             padding: const EdgeInsets.symmetric(horizontal: 16, vertical: 4),
             child: Obx(
-              () => SwitchListTile(
-                contentPadding: EdgeInsets.zero,
-                title: const Text('宽松同步模式'),
-                subtitle: const Text('容忍5秒进度差；落后过多的一方不再拖住对方，自行追赶'),
-                value: service.looseSync.value,
-                onChanged: (v) => service.looseSyncEnabled = v,
+              () => Column(
+                children: [
+                  SwitchListTile(
+                    contentPadding: EdgeInsets.zero,
+                    title: const Text('宽松同步模式'),
+                    subtitle: const Text('容忍5秒进度差；落后过多的一方不再拖住对方，自行追赶'),
+                    value: service.looseSync.value,
+                    onChanged: (v) => service.looseSyncEnabled = v,
+                  ),
+                  SwitchListTile(
+                    contentPadding: EdgeInsets.zero,
+                    title: const Text('悬浮控制面板'),
+                    subtitle: const Text('离开本页后显示一起看悬浮窗'),
+                    value: service.floatingPanel.value,
+                    onChanged: (v) => service.floatingPanelEnabled = v,
+                  ),
+                ],
               ),
             ),
           ),
@@ -411,6 +422,29 @@ class _WatchTogetherPageState extends State<WatchTogetherPage> {
                       value: call.micLevel.value.clamp(0.0, 1.0),
                       minHeight: 3,
                     ),
+                  ),
+                  // Remote voice loudness on this device.
+                  Row(
+                    children: [
+                      Text('对方音量', style: Theme.of(context).textTheme.bodySmall),
+                      Expanded(
+                        child: Obx(
+                          () => Slider(
+                            value: call.remoteVolume.value.clamp(0.0, 2.0),
+                            max: 2.0,
+                            divisions: 20,
+                            label: '${(call.remoteVolume.value * 100).round()}%',
+                            onChanged: (v) => call.remoteVolumeValue = v,
+                          ),
+                        ),
+                      ),
+                      Obx(
+                        () => Text(
+                          '${(call.remoteVolume.value * 100).round()}%',
+                          style: Theme.of(context).textTheme.bodySmall,
+                        ),
+                      ),
+                    ],
                   ),
                 ],
               ),

@@ -143,7 +143,7 @@ Future<void> runMirror(String server, String room, double buffer,
         roomUpdates++;
       case WtNavigateEvent():
         coordinator.reset();
-        emit('navigate', {'target': event.target.toJson()});
+        emit('navigate', {'target': event.target?.toJson()});
       case WtErrorEvent():
         failure = event.code;
         if (!joined.isCompleted) joined.completeError(StateError(event.code));

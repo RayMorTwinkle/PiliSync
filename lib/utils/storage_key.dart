@@ -324,6 +324,8 @@ abstract final class SettingBoxKey {
 
   static const String wtLooseSync = 'wtLooseSync',
       wtVoiceGate = 'wtVoiceGate',
+      wtRemoteVolume = 'wtRemoteVolume',
+      wtFloatingPanel = 'wtFloatingPanel',
       wtWelcomed = 'wtWelcomed';
 }
 

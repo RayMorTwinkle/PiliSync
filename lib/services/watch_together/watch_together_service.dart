@@ -164,6 +164,29 @@ class WatchTogetherService {
     } catch (_) {}
   }
 
+  // In-room floating panel — off by default; the room page itself plus
+  // this toggle are the controls.
+  RxBool? _floatingPanelRx;
+  RxBool get floatingPanel =>
+      _floatingPanelRx ??= RxBool(_readFloatingPanel());
+
+  bool _readFloatingPanel() {
+    try {
+      return GStorage.setting.get(SettingBoxKey.wtFloatingPanel,
+              defaultValue: false) as bool? ??
+          false;
+    } catch (_) {
+      return false;
+    }
+  }
+
+  set floatingPanelEnabled(bool v) {
+    floatingPanel.value = v;
+    try {
+      GStorage.setting.put(SettingBoxKey.wtFloatingPanel, v);
+    } catch (_) {}
+  }
+
   double? get memberLastSeekDebug => _memberCoordinator.lastSeek;
 
   set serverUrl(String value) =>
@@ -374,8 +397,19 @@ class WatchTogetherService {
       if (client.navigate(target)) {
         _currentTarget = target;
       }
+    } else if (target == null && _currentTarget != null) {
+      // The host left the video page entirely — a null-target navigate
+      // clears the room target and tells members to pop back off the
+      // stale video route.
+      if (client.navigate(null)) {
+        _currentTarget = null;
+      }
     }
     _hostUpdate();
+    // Re-evaluate the member barrier every tick: event-driven evaluation
+    // alone misses the case where the host was buffering when the
+    // member's loading report arrived and is only pausable afterwards.
+    _applyHostBarrier(room.value?.waitForLoadding ?? false);
     // Host is also a member: heartbeat is sent from _tick outside the
     // _ticking gate so a hung calibrate cannot starve it.
   }
@@ -477,6 +511,14 @@ class WatchTogetherService {
     final localTarget = _detectTarget();
     final roomTarget = snap.playback.target;
 
+    // The room has no target anymore (the host's null-navigate frame was
+    // missed — e.g. it raced a reconnect) but the member is still sitting
+    // on the video page: leave it.
+    if (roomTarget == null && _currentTarget != null && localTarget != null) {
+      _exitVideoTarget();
+      return;
+    }
+
     // A failed member navigate leaves the user on the old page forever.
     // While a navigate is pending and the local page provably differs
     // (or still hasn't materialized), retry on a slow cadence.
@@ -547,10 +589,14 @@ class WatchTogetherService {
 
   /// Raw member loading signal: buffering, but outside the post-seek
   /// silence window (a sync-issued seek flushes the buffer — reporting
-  /// that refill as loading pauses the whole room for nothing).
+  /// that refill as loading pauses the whole room for nothing). A paused
+  /// member does not report: a player paused by sync or by hand is not
+  /// actively loading, and a stuck paused-buffering flag would otherwise
+  /// pin the room's barrier and deadlock the host's own load.
   bool _rawLoading(double now) =>
       player.hasPlayer &&
       !player.isLive &&
+      player.isPlaying &&
       player.isBuffering &&
       !_memberCoordinator.inSeekSilence(now);
 
@@ -637,7 +683,9 @@ class WatchTogetherService {
         if (event.waitForLoadding != null) {
           _applyWaitUpdate(event.waitForLoadding!);
         }
-        if (_followNavigate(event.target)) {
+        if (event.target == null) {
+          _exitVideoTarget();
+        } else if (_followNavigate(event.target!)) {
           SmartDialog.showToast('正在跟随房主切换视频');
         }
       case WtPeerEvent():
@@ -791,6 +839,18 @@ class WatchTogetherService {
     }
   }
 
+  /// The host left the video page: drop the stale target and pop the
+  /// member's video route if it is still sitting on it.
+  void _exitVideoTarget() {
+    _currentTarget = null;
+    _navigatePending = false;
+    _navigateRetries = 0;
+    final route = Get.currentRoute;
+    if (route == '/videoV' || route == '/liveRoom') {
+      Get.back();
+    }
+  }
+
   /// Follow a host navigation only when it actually differs from the page
   /// the member is already on — reconnects must not rebuild the player.
   bool _followNavigate(WtTarget target) {
@@ -835,7 +895,12 @@ class WatchTogetherService {
     if (!role.value.isHost || !inRoom.value || !player.hasPlayer) return;
     final resume = hostIntent.updateBarrier(
       waiting: waiting,
-      isPlaying: player.hasPlayer && player.isPlaying,
+      // A buffering host is not really playing — pausing it gains nothing
+      // and on engines where pause stalls the demuxer it would deadlock
+      // the host's own load behind the member barrier. The barrier still
+      // engages on the next tick once the host is actually playing.
+      isPlaying:
+          player.hasPlayer && player.isPlaying && !player.isBuffering,
     );
     final now = client.timeSync.localNow();
     if (resume == false) {

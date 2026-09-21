@@ -1286,3 +1286,43 @@ func TestTransferDeny(t *testing.T) {
 	send(member, updateMsg("rd", "pw1", "memB", 20))
 	waitForErr(t, member, "other_host_syncing", 2*time.Second)
 }
+
+// F14: a null-target navigate clears the room target and broadcasts —
+// members use it to pop back off the video route when the host leaves.
+func TestNavigateNullTarget(t *testing.T) {
+	srv, rooms := startTestServerRooms(t)
+	defer srv.Close()
+
+	host := dial(t, srv)
+	defer host.Close()
+	member := dial(t, srv)
+	defer member.Close()
+
+	send(host, updateMsg("r1", "pw1", "hostA", 10))
+	waitFor(t, host, "update_ack", 2*time.Second)
+	send(member, map[string]any{"type": "join", "room": "r1", "password": "pw1", "tempUser": "memB"})
+	waitFor(t, member, "joined", 2*time.Second)
+	waitFor(t, host, "peer_joined", 2*time.Second)
+
+	send(host, map[string]any{
+		"type": "navigate", "room": "r1", "password": "pw1", "tempUser": "hostA",
+		"target": map[string]any{"type": "video", "bvid": "BV1xx", "cid": 123},
+	})
+	nav := waitFor(t, member, "navigate", 2*time.Second)
+	if nav["target"] == nil {
+		t.Fatalf("expected target on real navigate")
+	}
+
+	// Host leaves the video page: nil target clears and broadcasts.
+	send(host, map[string]any{
+		"type": "navigate", "room": "r1", "password": "pw1", "tempUser": "hostA",
+	})
+	nav = waitFor(t, member, "navigate", 2*time.Second)
+	if nav["target"] != nil {
+		t.Fatalf("expected nil target on leave navigate, got %v", nav["target"])
+	}
+	room := rooms.Get("r1")
+	if room == nil || room.Playback.Target != nil {
+		t.Fatalf("room target should be cleared after null navigate")
+	}
+}

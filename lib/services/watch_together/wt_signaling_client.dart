@@ -257,7 +257,9 @@ class WtSignalingClient {
         _events.add(
           WtNavigateEvent(
             msg['from'] as String? ?? '',
-            WtTarget.fromJson(msg['target'] as Map<String, dynamic>),
+            msg['target'] is Map<String, dynamic>
+                ? WtTarget.fromJson(msg['target'] as Map<String, dynamic>)
+                : null,
             msg['waitForLoadding'] as bool?,
           ),
         );
@@ -350,13 +352,15 @@ class WtSignalingClient {
     });
   }
 
-  bool navigate(WtTarget target) {
+  /// A null target means "host left the video page" — the server clears
+  /// the room target and members pop back off the video route.
+  bool navigate(WtTarget? target) {
     return _sendRaw({
       'type': 'navigate',
       'room': roomName,
       'password': password,
       'tempUser': tempUser,
-      'target': target.toJson(),
+      'target': target?.toJson(),
     });
   }
 
