@@ -3,6 +3,7 @@ package main
 import (
 	"encoding/json"
 	"log"
+	"math"
 	"net"
 	"net/http"
 	"strings"
@@ -27,6 +28,17 @@ const (
 	maxClients        = 5000
 	maxPerIP          = 50
 	maxMembersPerRoom = 32
+
+	// Field-length caps: the 1MB read limit alone allowed a single frame
+	// to fan a megabyte out to every member — bound the attacker-
+	// controllable strings well below it.
+	maxRoomLen      = 128
+	maxTempUserLen  = 64
+	maxTitleLen     = 256
+	maxURLLen       = 2048
+	maxBvidLen      = 64
+	maxTargetTypLen = 32
+	maxWebRTCLen    = 64 << 10
 
 	// inbound rate limit per connection (token bucket)
 	msgRate  = 10.0 // messages per second
@@ -147,7 +159,10 @@ func (h *Hub) closeRoom(room *Room) {
 	}
 }
 
-func (h *Hub) broadcast(roomName string, v any, skip *Client) {
+// broadcast targets connections bound to the exact Room instance — a
+// room deleted and recreated under the same name must not receive each
+// other's events across the generation boundary.
+func (h *Hub) broadcast(room *Room, v any, skip *Client) {
 	b, err := json.Marshal(v)
 	if err != nil {
 		return
@@ -155,7 +170,7 @@ func (h *Hub) broadcast(roomName string, v any, skip *Client) {
 	h.mu.Lock()
 	defer h.mu.Unlock()
 	for c := range h.clients {
-		if c.roomName != roomName || c == skip {
+		if c.room != room || c == skip {
 			continue
 		}
 		select {
@@ -216,6 +231,10 @@ func (h *Hub) handle(c *Client, raw []byte) {
 		c.sendJSON(map[string]any{"type": "error", "code": "bad_json"})
 		return
 	}
+	if !validateIncoming(&msg) {
+		c.sendJSON(map[string]any{"type": "error", "code": "bad_request"})
+		return
+	}
 	switch msg.Type {
 	case "join":
 		h.handleJoin(c, &msg)
@@ -235,6 +254,52 @@ func (h *Hub) handle(c *Client, raw []byte) {
 		c.sendJSON(map[string]any{"type": "tsync_ack", "t": msg.T, "server": now()})
 	default:
 		c.sendJSON(map[string]any{"type": "error", "code": "unknown_type", "got": msg.Type})
+	}
+}
+
+// validateIncoming bounds every attacker-controlled field before any
+// handler runs — unbounded strings turn the broadcast fan-out into an
+// amplification channel (one 1MB frame × 32 members × 10 msg/s).
+func validateIncoming(msg *Incoming) bool {
+	if len(msg.Room) > maxRoomLen ||
+		len(msg.Password) > maxRoomLen ||
+		len(msg.TempUser) > maxTempUserLen ||
+		len(msg.To) > maxTempUserLen ||
+		len(msg.Payload) > maxWebRTCLen {
+		return false
+	}
+	if msg.Target != nil &&
+		(len(msg.Target.Title) > maxTitleLen ||
+			len(msg.Target.Bvid) > maxBvidLen ||
+			len(msg.Target.Type) > maxTargetTypLen) {
+		return false
+	}
+	if msg.Playback != nil &&
+		(len(msg.Playback.Url) > maxURLLen ||
+			len(msg.Playback.VideoTitle) > maxTitleLen) {
+		return false
+	}
+	return true
+}
+
+// sanitizePlayback clamps hostile/NaN playback fields to sane values so
+// a malformed update cannot poison member extrapolation or the
+// end-of-video barrier exemption.
+func sanitizePlayback(pb *PlaybackState) {
+	if math.IsNaN(pb.CurrentTime) || math.IsInf(pb.CurrentTime, 0) || pb.CurrentTime < 0 {
+		pb.CurrentTime = 0
+	}
+	if math.IsNaN(pb.Duration) || math.IsInf(pb.Duration, 0) || pb.Duration < 0 {
+		pb.Duration = 0
+	}
+	if math.IsNaN(pb.PlaybackRate) || math.IsInf(pb.PlaybackRate, 0) {
+		pb.PlaybackRate = 1
+	}
+	if pb.PlaybackRate < 0.1 {
+		pb.PlaybackRate = 0.1
+	}
+	if pb.PlaybackRate > 10 {
+		pb.PlaybackRate = 10
 	}
 }
 
@@ -297,7 +362,10 @@ func (h *Hub) handleJoin(c *Client, msg *Incoming) {
 			c.sendJSON(map[string]any{"type": "error", "code": "already_bound"})
 			return
 		}
-		// duplicate join for the same identity: idempotent, just re-ack
+		// duplicate join for the same identity: idempotent re-ack, plus a
+		// member-record self-heal — a raced disconnect can drop the record
+		// while this connection stays bound.
+		room.upsertMember(msg.TempUser)
 		isHost := room.IsHost(msg.TempUser)
 		snap := room.Snapshot()
 		snap["isHost"] = isHost
@@ -309,18 +377,26 @@ func (h *Hub) handleJoin(c *Client, msg *Incoming) {
 		})
 		return
 	}
-	if !room.hasMember(msg.TempUser) && room.memberCount() >= maxMembersPerRoom {
+	// Member-cap check + upsert + binding happen under h.mu so they are
+	// atomic against disconnect's stillBound-check+removeMember (same
+	// critical section) — previously a stale conn could delete the member
+	// record a fresh conn had just claimed.
+	h.mu.Lock()
+	room.mu.Lock()
+	_, memberExists := room.members[msg.TempUser]
+	if !memberExists && len(room.members) >= maxMembersPerRoom {
+		room.mu.Unlock()
+		h.mu.Unlock()
 		c.sendJSON(map[string]any{"type": "error", "code": "room_full"})
 		return
 	}
-	room.upsertMember(msg.TempUser)
-	isHost := room.IsHost(msg.TempUser)
-
-	h.mu.Lock()
+	room.upsertMemberLocked(msg.TempUser)
 	c.roomName = msg.Room
 	c.tempUser = msg.TempUser
 	c.room = room
+	room.mu.Unlock()
 	h.mu.Unlock()
+	isHost := room.IsHost(msg.TempUser)
 
 	snap := room.Snapshot()
 	snap["isHost"] = isHost
@@ -330,7 +406,7 @@ func (h *Hub) handleJoin(c *Client, msg *Incoming) {
 		"timestamp": now(),
 		"isHost":    isHost,
 	})
-	h.broadcast(msg.Room, map[string]any{
+	h.broadcast(room, map[string]any{
 		"type":            "peer_joined",
 		"tempUser":        msg.TempUser,
 		"memberCount":     room.memberCount(),
@@ -373,6 +449,26 @@ func (h *Hub) handleUpdate(c *Client, msg *Incoming) {
 		c.sendJSON(map[string]any{"type": "error", "code": "wrong_password"})
 		return
 	}
+	// An unbound connection may not claim a tempUser that an online member
+	// already holds — tempUser is broadcast in peer/member messages, so
+	// without this anyone in the room could steal an identity and take
+	// over via the isNew path below.
+	if roomName == "" && room.hasMember(msg.TempUser) {
+		c.sendJSON(map[string]any{"type": "error", "code": "identity_in_use"})
+		return
+	}
+	// The update path must not bypass the member cap that join enforces —
+	// and the check must precede the takeover below so a rejected update
+	// cannot leave a phantom HostId on a user who never bound.
+	room.mu.Lock()
+	_, memberExists := room.members[msg.TempUser]
+	capFull := !memberExists && msg.TempUser != room.HostId &&
+		len(room.members) >= maxMembersPerRoom
+	room.mu.Unlock()
+	if capFull {
+		c.sendJSON(map[string]any{"type": "error", "code": "room_full"})
+		return
+	}
 	isNew := room.markSeen(msg.TempUser)
 	if !room.IsHost(msg.TempUser) {
 		if isNew {
@@ -386,20 +482,26 @@ func (h *Hub) handleUpdate(c *Client, msg *Incoming) {
 		}
 	}
 	pb := *msg.Playback
+	sanitizePlayback(&pb)
 	pb.LastUpdateServerTime = now()
 	if pb.LastUpdateClientTime == 0 {
 		pb.LastUpdateClientTime = pb.LastUpdateServerTime
 	}
 	room.mu.Lock()
 	room.updatePlaybackLocked(pb)
-	room.upsertMemberLocked(msg.TempUser)
 	snap := room.snapshotLocked()
 	room.mu.Unlock()
 
+	// Bind + upsert atomically under h.mu so disconnect's
+	// stillBound-check+removeMember (same critical section) cannot delete
+	// the member record a fresh conn just claimed.
 	h.mu.Lock()
+	room.mu.Lock()
+	room.upsertMemberLocked(msg.TempUser)
 	c.roomName = room.Name
 	c.tempUser = msg.TempUser
 	c.room = room
+	room.mu.Unlock()
 	h.mu.Unlock()
 
 	ack := make(map[string]any, len(snap)+2)
@@ -430,6 +532,10 @@ func (h *Hub) handleUpdateMember(c *Client, msg *Incoming) {
 		c.sendJSON(map[string]any{"type": "error", "code": "missing_isLoading"})
 		return
 	}
+	// Self-heal before setLoading: a raced disconnect can drop the member
+	// record of a still-bound conn — upsert instead of rejecting, so one
+	// heartbeat restores membership rather than stranding it forever.
+	room.upsertMember(msg.TempUser)
 	ok, changed := room.setLoading(msg.TempUser, *msg.IsLoading, msg.Target)
 	if !ok {
 		c.sendJSON(map[string]any{"type": "error", "code": "not_in_room"})
@@ -443,11 +549,15 @@ func (h *Hub) handleUpdateMember(c *Client, msg *Incoming) {
 		"waitForLoadding": room.anyoneLoading(),
 		"memberCount":     room.memberCount(),
 		"t":               msg.T,
+		// Every heartbeat echo doubles as a time sample for the member
+		// (VT samples on each update); without this the member only gets
+		// the 60s tsync ticks.
+		"timestamp": now(),
 	}
 	// Unchanged heartbeats only echo the sender (the `t` echo feeds its
 	// time sampling); fan-out happens only when the published state moved.
 	if changed {
-		h.broadcast(msg.Room, payload, nil)
+		h.broadcast(room, payload, nil)
 	} else {
 		c.sendJSON(payload)
 	}
@@ -474,7 +584,7 @@ func (h *Hub) handleNavigate(c *Client, msg *Incoming) {
 	room.mu.Lock()
 	room.setTargetLocked(msg.Target)
 	room.mu.Unlock()
-	h.broadcast(msg.Room, map[string]any{
+	h.broadcast(room, map[string]any{
 		"type":            "navigate",
 		"from":            msg.TempUser,
 		"target":          msg.Target,
@@ -528,13 +638,19 @@ func (h *Hub) handleWebRTC(c *Client, msg *Incoming) {
 	}
 	h.mu.Lock()
 	defer h.mu.Unlock()
+	// Deliver to EVERY conn matching the identity: map iteration order is
+	// random, and a zombie duplicate conn winning the first hit used to
+	// swallow the signal while the live conn never saw it.
+	delivered := false
 	for peer := range h.clients {
 		if peer.room == room && peer.tempUser == to {
 			peer.sendJSON(payload)
-			return
+			delivered = true
 		}
 	}
-	c.sendJSON(map[string]any{"type": "error", "code": "peer_not_found", "to": msg.To})
+	if !delivered {
+		c.sendJSON(map[string]any{"type": "error", "code": "peer_not_found", "to": msg.To})
+	}
 }
 
 func (h *Hub) handleChat(c *Client, msg *Incoming) {
@@ -551,7 +667,7 @@ func (h *Hub) handleChat(c *Client, msg *Incoming) {
 	if utf8.RuneCountInString(text) > maxChatRunes {
 		text = string([]rune(text)[:maxChatRunes])
 	}
-	h.broadcast(msg.Room, map[string]any{
+	h.broadcast(room, map[string]any{
 		"type": "chat",
 		"from": c.tempUser,
 		"text": text,
@@ -640,26 +756,30 @@ func (h *Hub) disconnect(c *Client) {
 			}
 		}
 	}
+	var newHost string
+	if existed && room != nil && tempUser != "" && !stillBound {
+		// Member removal + conditional handover run inside the h.mu
+		// critical section: join/update bind+upsert under the same lock,
+		// so a fresh conn's claim can no longer be deleted underneath it.
+		// The handover is conditional on HostId still being the departed
+		// user — a takeover that landed in the gap must not be clobbered.
+		room.mu.Lock()
+		delete(room.members, tempUser)
+		if room.HostId == tempUser {
+			newHost = room.transferHostLocked()
+		}
+		room.mu.Unlock()
+	}
 	h.mu.Unlock()
 	if !existed {
 		return
 	}
 
 	if room != nil && tempUser != "" && !stillBound {
-		room.removeMember(tempUser)
-		// Host departure used to freeze the room until the 3min expiry —
-		// members never send `update` so nobody could take over. Hand the
-		// host to the earliest-joined online member; the client's
-		// authoritative-role path promotes it on the next snapshot.
-		if room.IsHost(tempUser) {
-			room.mu.Lock()
-			newHost := room.transferHostLocked()
-			room.mu.Unlock()
-			if newHost != "" {
-				log.Printf("[host] handover room=%s %s -> %s", roomName, tempUser, newHost)
-			}
+		if newHost != "" {
+			log.Printf("[host] handover room=%s %s -> %s", roomName, tempUser, newHost)
 		}
-		h.broadcast(roomName, map[string]any{
+		h.broadcast(room, map[string]any{
 			"type":            "peer_left",
 			"tempUser":        tempUser,
 			"memberCount":     room.memberCount(),
@@ -667,7 +787,9 @@ func (h *Hub) disconnect(c *Client) {
 		}, nil)
 		h.broadcastRoom(room, nil)
 	}
-	_ = c.conn.Close()
+	if c.conn != nil {
+		_ = c.conn.Close()
+	}
 	log.Printf("[leave] room=%s user=%s", roomName, tempUser)
 }
 

@@ -231,11 +231,66 @@
 
 - **room→clients 广播索引**：broadcast 仍全 hub 扫描，F11-m 去重后小房间（≤5 人）无感；大房间场景再优化。
 - **成员心跳 TTL（VT IsJoined 10s）**：App 挂起时 dart isolate 停 → WS pong 停 → 120s pongWait 踢除 + LoadingSince 60s TTL 已双兜底；列为观察项。
-- **成员离开视频页后 coordinator 仍校准后台 player**：F11-k 已修屏障侧；校准残留播放器的优先级低（需 route↔target 比对，下一轮）。
+- ~~**成员离开视频页后 coordinator 仍校准后台 player**~~：F12-l 已修（本地 target 可证明不同时跳过校准）。
 - **断线期间成员快照 stale 仍外推/seek**：~~不做~~ 已随本轮修复——`_memberTick` 增加离线守卫，`connState != connected` 时冻结校准，避免断线期间持续 seek、重连后大跳变（VT 的 HTTP 兜底仍不做）。
 - **面板 per-member loading 显示 / 等待时长 / WaitForLoadding 用户开关 / play() 失败红字提示**：UX 增强，下一轮。
 - **tsync 偏移重收敛**（min-RTT 只进不退）、**broadcastRoom per-recipient marshal**：性能项，观察。
 - **V15 navigate↔update 竞态**：验证判定误报（同连接 TCP 保序），不修。
+
+---
+
+## F12 · 二轮深挖（2026-09-21，4 路审查 + 1 路验证复核）
+
+**状态：全部实施完毕并通过门禁**（go vet + race ✅ / flutter test +52 全绿含本地信令 e2e 实跑 ✅ / analyze 无新增 ✅）。新增回归：Dart 侧 F12-a/b/c/d/m 服务级 + F12-f 通话 + F12-i/m 协调器与 calibrate 层；Go 侧 F12-q/r/s/t/u/v/x/y/z/aa 十项。残留：F12-l（离页成员校准跳过）与 F12-n（navigate 重试）涉及 `Get.currentRoute`/`PageUtils` 无单测路径，验收靠真机；V12 误报已复核排除。
+
+验证结论：26 确认 / 4 部分成立 / 1 误报（V12 glare「caller 恒 impolite」——`_handleSignal` 在 glare 分支前已把 `_peerId` 重绑为 `event.from` 真实 uuid，双侧必一 polite 一 impolite，判定误报不修）。
+
+### 客户端修复项
+
+| # | 问题 | 位置 | 修法 | 验收 |
+|---|---|---|---|---|
+| F12-a | **宿主 buffering 边沿广播是死代码**：上升沿 Timer(1s)→`_hostUpdate`→`_hostBufferingDwelled` 里 `_hostBufferingSince ??= now` 在触发瞬间才播种 → `now-since=0<1.0` 恒 false，stall 实际延迟 2–3s（比改动前更差） | `watch_together_service.dart` `_bufferingSub`/`_hostBufferingDwelled` | 上升沿回调时立即播种 `_hostBufferingSince = now`，dwell 从边沿计起 | 单测：host buffering 1s 后 update 携带 paused=true |
+| F12-b | **seek 后 2s 静默窗是死代码**：coordinator 算好 `isBuffering && 距上次 seek≥2s` 传给 `reportLoading`，service 的 `_reportLoading([bool? _])` 丢弃参数重算 → 静默从未生效 | `wt_member_coordinator.dart`、`watch_together_service._reportLoading` | `_reportLoading` 采用入参作为 raw 信号喂给 dwell/cap；`_memberHeartbeat` 沿用裸 raw（心跳路径无 seek 上下文） | 单测：seek 后 1s 内 isBuffering 不产生 update_member(true) |
+| F12-c | **room_full/not_in_room/already_bound 只 toast 不退出** → 僵尸房 + 每 2s 心跳打回 toast 死循环 | `watch_together_service._handleError` | 终态错误码走 `leave()` + 明确文案（「房间已满」等） | 单测：room_full → inRoom=false |
+| F12-d | **离线守卫在 connected↔joined 间留 ~1RTT 陈旧快照窗口**：connected 即解冻，用断线前快照外推发大 seek | `watch_together_service._memberTick` | `_awaitingFreshSnapshot` 标志：断线时置位，`WtJoinedEvent`/`WtRoomUpdateEvent` 到达才解冻 | 断线重连场景不产生旧快照外推 seek |
+| F12-e | **min-RTT 只进不退 + 重连不 reset** → 换网络后 offset 永久污染 | `wt_signaling_client._openSocket`、`wt_sync_logic.WtTimeSync` | 新 socket 建立时 `timeSync.reset()`（host 侧有 hasValidSample 门控，安全） | 单测：重连后 offset 重新采样 |
+| F12-f | **通话可永久卡 calling**：`_peerId='peer'` 别名对不上 `onPeerLeft` 的真实 uuid；offer 建联异常被 `_signalWork.catchError` 吞；`start` 不查 socket 态 | `wt_call_manager.dart` | calling 加 answer 超时（15s→failed+toast）；未绑定别名时对端离开即 reset；offer 处理包 try/catch 置 failed；start 前查 connState | 单测：对端应答前离开 → 回到 idle |
+| F12-g | **`leave()` 先断 socket 再 `call.reset()`** → bye 永远发不出 | `watch_together_service.leave` | `call.reset()` 移到 `client.disconnect()` 前 | 单测：bye 信号进入 RecordingSignaling |
+| F12-h | **角色切换清理不全**：host→member 降级不重置 `_hostBufferingSince/Timer`；member 态播放器重建后 `_playbackReqSub` 等绑死旧实例 | `_applyAuthoritativeRole`、`_ensureStatusSub` 调用点 | 降级时重置 host buffering 状态；`_ensureStatusSub` 提到 `_tick` 公共段 | 单测：member 态换播放器后 barrier toast 仍生效 |
+| F12-i | **成员 seek 豁免无上限**：isBuffering 永真 → 成员永不回正（上报有 20s cap，豁免没有，不对称） | `wt_sync_logic.calibrate`、`wt_member_coordinator` | 豁免仅在缓冲 run < cap 时生效，超时允许一次对齐 seek | 单测：loading run>cap 且 diff 大 → 允许 seek |
+| F12-j | **`_executeAction` 串行 3×3s timeout 最坏 ~9s 持 _ticking**，期间心跳也被跳过 | `wt_member_coordinator`、`watch_together_service._tick` | `_memberHeartbeat` 移到 `_ticking` 闸门外 | 挂起 seek 时心跳照常 |
+| F12-k | **`seekTo` 的 duration==0 deferred 分支**：future 立即完成、timeout 失效、落地陈旧 position | `pl_player/controller.dart` | deferred seek 用 Completer，duration 流发射执行 seek 后才完成；超时挂起路径同样受控 | 单测：duration 未就绪时 seekTo 不提前完成 |
+| F12-l | **成员在无关视频页仍被校准拖拽**（tick 只查 hasPlayer/isLive 不比 target） | `watch_together_service._memberTick` | 本地 `_detectTarget()` 与房间 target 可证明不同（均非空且不匹配）时跳过校准 | 单测：成员在不同 bvid 页 → 无 seek/pause 命令 |
+| F12-m | **音频中断与同步打架**：成员被 calibrate 拉回播放；房主瞬态中断 pause 永久吞掉屏障自动恢复 | `audio_session`、`wt_playback_coordinator`、`controller.pause` | 成员侧外部 pause 后 10s 内 calibrate 不发 play；房主侧 `isInterrupt` 的 pause 不入 `_playbackRequests` | 单测：中断 pause 后成员不被立即拉回；房主屏障解除仍自动恢复 |
+| F12-n | **成员 navigate 失败静默滞留旧页**：viewPgc 失败无重试无回报；连续 navigate 的 pgcInfo 可乱序落地 | `watch_together_service._followNavigate`、`page_utils.viewPgc` | memberTick 里校验：本地 target 可证明与房间不符且距上次 navigate >10s → 重试；`_navigateGen` 代际丢弃陈旧解析 | 单测：viewPgc 失败后下个周期重试 navigate |
+| F12-o | **`_startTimeSync`/`_openSocket` 交错**：tsync Timer 丢引用泄漏；旧 socket 被顶掉不 close → 服务端僵尸 conn | `wt_signaling_client` | generation counter：openSocket 完成后校验代际，过期 socket 直接 close；tsync 用同一代际守卫 | 单测：交错后只保留最新 socket/timer |
+
+### 服务端修复项
+
+| # | 问题 | 位置 | 修法 | 验收 |
+|---|---|---|---|---|
+| F12-p | **同名 tempUser 断线/加入竞态**：disconnect 的 stillBound 检查与 removeMember 分属两个临界区 → 新 conn 认领的 member 被删；幂等 join 分支不补 upsert → 不可自愈 | `ws.go` disconnect/handleJoin、`room.go` | removeMember 与 stillBound 判定合并到 h.mu 临界区（锁序 h.mu→room.mu 安全）；幂等 join 与 update_member 路径补 upsertMember 自愈 | go test：竞态注入后 member 记录仍在 |
+| F12-q | **transferHost check-and-set 非原子**：断开处理间隙的 takeover 会被移交覆盖 | `ws.go` disconnect、`room.go` | `transferHostIfStill(departed)`：同一 room.mu 内 `HostId != departed → return ""` | go test：间隙 takeover 不被移交覆盖 |
+| F12-r | **未绑定 conn 可冒用在线成员 tempUser 夺权**（tempUser 明文广播可窃取） | `ws.go handleUpdate` | update 的 tempUser 命中在线 member 且本 conn 未绑定该身份 → `identity_in_use` 拒绝 | go test：冒名 update 被拒 |
+| F12-s | **update 路径绕过 maxMembersPerRoom** | `ws.go handleUpdate` | upsert 前检查：非 host 且非已有 member 且满员 → room_full | go test：满员房 update 被拒 |
+| F12-t | **webrtc 单播按 tempUser map 序随机命中**，僵尸 conn 吞信令 | `ws.go handleWebRTC` | 投递给全部匹配 conn（不改初版语义，僵尸自然失效） | go test：双 conn 同 tempUser 均收到 |
+| F12-u | **文本字段无上限** → 1MB×10/s×扇出32 带宽放大 | `ws.go` 各 handle* | 字段 cap：tempUser≤64、room≤128、title≤256、url≤2KB、webrtc payload≤64KB | go test：超限字段被拒或截断 |
+| F12-v | **playback 零校验**：`duration=0.001` 使 `CurrentTime>=Duration-0.5` 恒真 → 屏障永久豁免；负 rate 透传 | `ws.go handleUpdate`、`room.go anyoneLoadingLocked` | 片尾豁免要求 `Duration>=1.0`；currentTime<0→0；rate 钳到 [0.1,10] | go test：畸形 duration 不再豁免屏障 |
+| F12-w | **broadcast 按 roomName 字符串匹配**：过期删除→重建同名房窗口内新旧 conn 互收事件 | `ws.go broadcast` 及调用点 | 改按 `c.room == room` 实例匹配 | go test：重建后旧 conn 不收新房事件 |
+| F12-x | **`member_update` 回显缺 timestamp** → 成员对时样本只剩 60s tsync（VT 每次心跳都有样本） | `ws.go handleUpdateMember` | payload 补 `"timestamp": now()`（广播与回显同带） | go test：回显含 timestamp |
+| F12-y | **房主自身 loading 进入屏障聚合** → 房主卡顿给自己 toast「成员缓冲中」+自 pause（VT 中房主不走 loading 通道） | `room.go anyoneLoadingLocked`、`_memberHeartbeat` | 聚合排除 `m.TempUser == r.HostId` | go test：host loading 不抬屏障 |
+| F12-z | **成员心跳无新鲜度 TTL**（VT IsJoined=10s）：僵尸 conn 的 stale isLoading 要等 60s 总 TTL | `room.go Member` | `Member.LastHeartbeat`（setLoading/join 刷新），屏障聚合要求 `<15s` 新鲜 | go test：15s 无心跳的 loading 成员不计屏障 |
+| F12-aa | **屏障翻转无主动广播**：setLoading 的 changed 不比屏障计算值，TTL 到期翻转被 dedup 吞 | `room.go setLoading` | `changed = changed || prevBarrier != newBarrier` | go test：TTL 到期后一次心跳即广播 false |
+| F12-ab | **member_update 的 waitForLoadding 客户端 `?? false`**：老服务端缺字段时被误读为 false 清屏障 | `wt_signaling_client` | 改可空透传，缺失时不改快照 | 单测：缺字段不清屏障 |
+
+### 残留/不做（记录备查）
+
+- **V31 房间过期自动恢复**（VT 轮询式 rejoin）：需「等待房间重建」态设计，下一轮。
+- **V32 房间状态持久化**（进程被杀丢房）：下一轮。
+- **V27 空房 HostId 残留可被旧成员名恢复**：空房内任意 fresh tempUser 的 update 本就可 takeover（VT userIds 语义），tempUser 是 uuid 不可猜，面小，不修。
+- **V20 剩余缺口**（host 停更场景下屏障翻转不扩散）：F12-aa 已覆盖主要路径。
+- **跨 goroutine 事件乱序**（member_update vs peer_left 屏障值瞬时不一致）：下一事件自愈，不加序号机制。
+- **V12 glare 双 impolite**：误报不修。
 
 ---
 

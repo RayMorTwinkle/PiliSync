@@ -2,6 +2,7 @@ package main
 
 import (
 	"encoding/json"
+	"fmt"
 	"net/http"
 	"net/http/httptest"
 	"strings"
@@ -24,6 +25,15 @@ func startTestServerWithExpiry(t *testing.T, expire, interval time.Duration) *ht
 	hub := NewHub(rooms)
 	mux := setupMux(rooms, hub)
 	return httptest.NewServer(mux)
+}
+
+// startTestServerRooms returns the store alongside the server so tests
+// can inspect/backdate member state (e.g. stale heartbeats).
+func startTestServerRooms(t *testing.T) (*httptest.Server, *RoomStore) {
+	rooms := NewRoomStore(nil)
+	hub := NewHub(rooms)
+	mux := setupMux(rooms, hub)
+	return httptest.NewServer(mux), rooms
 }
 
 func dial(t *testing.T, srv *httptest.Server) *websocket.Conn {
@@ -793,4 +803,325 @@ func TestNavigateResetsPaused(t *testing.T) {
 	if snap["currentTime"] != 0.0 {
 		t.Fatalf("post-navigate currentTime should be 0, got %v", snap["currentTime"])
 	}
+}
+
+// F12-r: an unbound connection must not claim a tempUser that an online
+// member already holds — otherwise anyone in the room could steal the
+// host's identity via the update path.
+func TestUnboundUpdateCannotStealMemberIdentity(t *testing.T) {
+	srv := startTestServer(t)
+	defer srv.Close()
+
+	host := dial(t, srv)
+	defer host.Close()
+	send(host, updateMsg("r9", "", "hostA", 1))
+	waitFor(t, host, "update_ack", 2*time.Second)
+
+	member := dial(t, srv)
+	defer member.Close()
+	send(member, map[string]any{"type": "join", "room": "r9", "password": "", "tempUser": "memB"})
+	waitFor(t, member, "joined", 2*time.Second)
+
+	// Stranger claims the member's live identity via update -> rejected.
+	stranger := dial(t, srv)
+	defer stranger.Close()
+	send(stranger, updateMsg("r9", "", "memB", 5))
+	waitForErr(t, stranger, "identity_in_use", 2*time.Second)
+
+	// And the host's identity is equally protected.
+	send(stranger, updateMsg("r9", "", "hostA", 6))
+	waitForErr(t, stranger, "identity_in_use", 2*time.Second)
+
+	// A genuinely fresh identity still takes over (VT reclaim semantics).
+	send(stranger, updateMsg("r9", "", "freshC", 7))
+	if ack := waitFor(t, stranger, "update_ack", 2*time.Second); ack["room"].(map[string]any)["isHost"] != true {
+		t.Fatalf("fresh identity should still take over, got %v", ack)
+	}
+}
+
+// F12-q: if a member takes over host in the gap between the host's
+// socket dying and disconnect() processing it, the stale disconnect must
+// not clobber the takeover by re-transferring host.
+func TestDisconnectHandoverDoesNotClobberTakeover(t *testing.T) {
+	rooms := NewRoomStore(nil)
+	hub := NewHub(rooms)
+	room := rooms.GetOrCreate("rx", "", "hostA")
+
+	host := &Client{send: make(chan []byte, 64), hub: hub}
+	member := &Client{send: make(chan []byte, 64), hub: hub}
+	hub.mu.Lock()
+	hub.clients[host] = true
+	hub.clients[member] = true
+	host.roomName, host.tempUser, host.room = "rx", "hostA", room
+	member.roomName, member.tempUser, member.room = "rx", "memB", room
+	hub.mu.Unlock()
+	room.mu.Lock()
+	room.upsertMemberLocked("hostA")
+	room.upsertMemberLocked("memB")
+	room.mu.Unlock()
+
+	// The member takes over in the race window (isNew update path).
+	room.mu.Lock()
+	room.setHostLocked("memB")
+	room.mu.Unlock()
+
+	// Now the stale host connection's disconnect runs — it must NOT
+	// re-transfer host away from the member who just claimed it.
+	hub.disconnect(host)
+	if !room.IsHost("memB") {
+		t.Fatalf("stale disconnect clobbered the takeover")
+	}
+}
+
+// F12-s: the update path enforces the same member cap join does — a
+// takeover storm cannot overflow the room past maxMembersPerRoom.
+func TestUpdatePathRespectsMemberCap(t *testing.T) {
+	rooms := NewRoomStore(nil)
+	hub := NewHub(rooms)
+	room := rooms.GetOrCreate("rc", "", "hostA")
+
+	host := &Client{send: make(chan []byte, 64), hub: hub}
+	hub.mu.Lock()
+	hub.clients[host] = true
+	host.roomName, host.tempUser, host.room = "rc", "hostA", room
+	hub.mu.Unlock()
+	room.mu.Lock()
+	room.upsertMemberLocked("hostA")
+	for i := 0; i < maxMembersPerRoom-1; i++ {
+		room.upsertMemberLocked(fmt.Sprintf("m%d", i))
+	}
+	room.mu.Unlock()
+
+	// Room is at cap: a fresh identity's update must be rejected.
+	flood := &Client{send: make(chan []byte, 64), hub: hub}
+	hub.handleUpdate(flood, &Incoming{
+		Type: "update", Room: "rc", TempUser: "invader",
+		Playback: &PlaybackState{
+			PlaybackRate: 1, CurrentTime: 1, Duration: 100,
+			LastUpdateClientTime: 1,
+		},
+	})
+	select {
+	case raw := <-flood.send:
+		var m map[string]any
+		_ = json.Unmarshal(raw, &m)
+		if m["code"] != "room_full" {
+			t.Fatalf("expected room_full, got %v", m)
+		}
+	default:
+		t.Fatal("expected a room_full rejection")
+	}
+	if room.IsHost("invader") {
+		t.Fatalf("rejected update must not leave a phantom host")
+	}
+}
+
+// F12-v: a degenerate duration (<1s, NaN, negative) must not trigger the
+// end-of-video barrier exemption.
+func TestDegenerateDurationDoesNotExemptBarrier(t *testing.T) {
+	srv := startTestServer(t)
+	defer srv.Close()
+
+	host := dial(t, srv)
+	defer host.Close()
+	member := dial(t, srv)
+	defer member.Close()
+
+	up := updateMsgWithTarget("rd", "", "hostA", 0)
+	up["playback"].(map[string]any)["currentTime"] = 0.9
+	up["playback"].(map[string]any)["duration"] = 0.9 // degenerate: <1s
+	send(host, up)
+	waitFor(t, host, "update_ack", 2*time.Second)
+	send(member, map[string]any{"type": "join", "room": "rd", "password": "", "tempUser": "memB"})
+	waitFor(t, member, "joined", 2*time.Second)
+	waitFor(t, host, "peer_joined", 2*time.Second)
+
+	send(member, memberLoadingMsg("rd", "", "memB", true, true))
+	if mu := waitFor(t, host, "member_update", 2*time.Second); mu["waitForLoadding"] != true {
+		t.Fatalf("degenerate duration must not exempt the barrier")
+	}
+}
+
+// F12-x: member_update echoes carry a timestamp so heartbeats feed the
+// member's time-sync between the 60s tsync packets.
+func TestMemberUpdateEchoCarriesTimestamp(t *testing.T) {
+	srv := startTestServer(t)
+	defer srv.Close()
+
+	host := dial(t, srv)
+	defer host.Close()
+	send(host, updateMsg("re", "", "hostA", 1))
+	waitFor(t, host, "update_ack", 2*time.Second)
+
+	member := dial(t, srv)
+	defer member.Close()
+	send(member, map[string]any{"type": "join", "room": "re", "password": "", "tempUser": "memB"})
+	waitFor(t, member, "joined", 2*time.Second)
+	waitFor(t, host, "peer_joined", 2*time.Second)
+
+	send(member, memberLoadingMsg("re", "", "memB", true, true))
+	echo := waitFor(t, member, "member_update", 2*time.Second)
+	if _, ok := echo["timestamp"].(float64); !ok {
+		t.Fatalf("member_update echo must carry timestamp: %v", echo)
+	}
+}
+
+// F12-y: the host's own loading flag is excluded from the member barrier
+// — the host reports its stall through the paused playback state, and
+// counting it would make the host wait on itself forever.
+func TestHostLoadingExcludedFromBarrier(t *testing.T) {
+	srv := startTestServer(t)
+	defer srv.Close()
+
+	host := dial(t, srv)
+	defer host.Close()
+	member := dial(t, srv)
+	defer member.Close()
+
+	send(host, updateMsgWithTarget("rf", "", "hostA", 10))
+	waitFor(t, host, "update_ack", 2*time.Second)
+	send(member, map[string]any{"type": "join", "room": "rf", "password": "", "tempUser": "memB"})
+	waitFor(t, member, "joined", 2*time.Second)
+	waitFor(t, host, "peer_joined", 2*time.Second)
+
+	// Host reports isLoading=true (its heartbeat path does this) — the
+	// barrier must stay down.
+	send(host, memberLoadingMsg("rf", "", "hostA", true, true))
+	mu := waitFor(t, member, "member_update", 2*time.Second)
+	if mu["waitForLoadding"] != false {
+		t.Fatalf("host loading must not raise the member barrier: %v", mu)
+	}
+}
+
+// F12-z: a member that stops heartbeating cannot hold the barrier —
+// its loading flag is ignored once LastHeartbeat goes stale.
+func TestStaleHeartbeatDoesNotHoldBarrier(t *testing.T) {
+	srv, rooms := startTestServerRooms(t)
+	defer srv.Close()
+
+	host := dial(t, srv)
+	defer host.Close()
+	member := dial(t, srv)
+	defer member.Close()
+
+	send(host, updateMsgWithTarget("rg", "", "hostA", 10))
+	waitFor(t, host, "update_ack", 2*time.Second)
+	send(member, map[string]any{"type": "join", "room": "rg", "password": "", "tempUser": "memB"})
+	waitFor(t, member, "joined", 2*time.Second)
+	waitFor(t, host, "peer_joined", 2*time.Second)
+
+	send(member, memberLoadingMsg("rg", "", "memB", true, true))
+	if mu := waitFor(t, host, "member_update", 2*time.Second); mu["waitForLoadding"] != true {
+		t.Fatalf("fresh loading should hold the barrier")
+	}
+	_ = waitFor(t, member, "member_update", 2*time.Second) // drain echo
+
+	// The member's socket silently dies (no close frame → disconnect not
+	// yet processed): heartbeats stop. Backdate LastHeartbeat past the
+	// 15s freshness TTL.
+	room := rooms.Get("rg")
+	room.mu.Lock()
+	room.members["memB"].LastHeartbeat = time.Now().Add(-20 * time.Second)
+	room.mu.Unlock()
+
+	// Next host update recomputes the barrier → released.
+	send(host, updateMsgWithTarget("rg", "", "hostA", 11))
+	if ack := waitFor(t, host, "update_ack", 2*time.Second); ack["room"].(map[string]any)["waitForLoadding"] != false {
+		t.Fatalf("stale heartbeat must release the barrier, got %v", ack["room"])
+	}
+}
+
+// F12-aa: when the aggregate barrier flips WITHOUT any member's flag
+// changing (TTL expiry of the loading run), the transition must still
+// broadcast — otherwise the host waits until its own 2s update.
+func TestBarrierFlipBroadcastOnTTLExpiry(t *testing.T) {
+	defer func(orig time.Duration) { maxMemberLoadingWait = orig }(maxMemberLoadingWait)
+	maxMemberLoadingWait = 80 * time.Millisecond
+	srv := startTestServer(t)
+	defer srv.Close()
+
+	host := dial(t, srv)
+	defer host.Close()
+	member := dial(t, srv)
+	defer member.Close()
+
+	send(host, updateMsgWithTarget("rh", "", "hostA", 10))
+	waitFor(t, host, "update_ack", 2*time.Second)
+	send(member, map[string]any{"type": "join", "room": "rh", "password": "", "tempUser": "memB"})
+	waitFor(t, member, "joined", 2*time.Second)
+	waitFor(t, host, "peer_joined", 2*time.Second)
+
+	send(member, memberLoadingMsg("rh", "", "memB", true, true))
+	if mu := waitFor(t, host, "member_update", 2*time.Second); mu["waitForLoadding"] != true {
+		t.Fatalf("fresh loading should hold the barrier")
+	}
+	_ = waitFor(t, member, "member_update", 2*time.Second)
+
+	// Loading run expires. The member re-sends the SAME flag — no member
+	// flag changed, but the barrier flips false→ broadcast to the host.
+	time.Sleep(150 * time.Millisecond)
+	send(member, memberLoadingMsg("rh", "", "memB", true, true))
+	_ = waitFor(t, member, "member_update", 2*time.Second) // sender copy
+	mu := waitFor(t, host, "member_update", 2*time.Second)
+	if mu["waitForLoadding"] != false {
+		t.Fatalf("barrier flip must broadcast waitForLoadding=false, got %v", mu)
+	}
+}
+
+// F12-t: a WebRTC signal to a tempUser is delivered to EVERY live
+// connection bound to it — reconnecting devices hold two conns briefly
+// and dropping one races the delivery.
+func TestWebRTCDeliversToAllMatchingConns(t *testing.T) {
+	srv := startTestServer(t)
+	defer srv.Close()
+
+	host := dial(t, srv)
+	defer host.Close()
+	send(host, updateMsg("ri", "", "hostA", 1))
+	waitFor(t, host, "update_ack", 2*time.Second)
+
+	m1 := dial(t, srv)
+	defer m1.Close()
+	send(m1, map[string]any{"type": "join", "room": "ri", "password": "", "tempUser": "memB"})
+	waitFor(t, m1, "joined", 2*time.Second)
+	m2 := dial(t, srv)
+	defer m2.Close()
+	send(m2, map[string]any{"type": "join", "room": "ri", "password": "", "tempUser": "memB"})
+	waitFor(t, m2, "joined", 2*time.Second)
+
+	send(host, map[string]any{
+		"type": "webrtc", "tempUser": "hostA", "to": "memB",
+		"payload": map[string]any{"kind": "offer", "sdp": "x"},
+	})
+	waitFor(t, m1, "webrtc", 2*time.Second)
+	waitFor(t, m2, "webrtc", 2*time.Second)
+}
+
+// F12-u: attacker-controlled fields are length-capped before they can
+// amplify through the broadcast fan-out.
+func TestFieldLengthCaps(t *testing.T) {
+	srv := startTestServer(t)
+	defer srv.Close()
+
+	host := dial(t, srv)
+	defer host.Close()
+	send(host, updateMsg("rj", "", "hostA", 1))
+	waitFor(t, host, "update_ack", 2*time.Second)
+
+	big := strings.Repeat("x", maxTempUserLen+1)
+	conn := dial(t, srv)
+	defer conn.Close()
+	send(conn, map[string]any{"type": "join", "room": "rj", "password": "", "tempUser": big})
+	waitForErr(t, conn, "bad_request", 2*time.Second)
+
+	// Oversized WebRTC payload (>64KiB) is rejected too.
+	member := dial(t, srv)
+	defer member.Close()
+	send(member, map[string]any{"type": "join", "room": "rj", "password": "", "tempUser": "memB"})
+	waitFor(t, member, "joined", 2*time.Second)
+	send(member, map[string]any{
+		"type": "webrtc", "tempUser": "memB", "to": "hostA",
+		"payload": map[string]any{"sdp": strings.Repeat("s", maxWebRTCLen)},
+	})
+	waitForErr(t, member, "bad_request", 2*time.Second)
 }

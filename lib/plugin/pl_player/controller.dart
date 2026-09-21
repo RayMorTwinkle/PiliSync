@@ -1,4 +1,5 @@
-import 'dart:async' show StreamController, StreamSubscription, Timer, unawaited;
+import 'dart:async'
+    show Completer, StreamController, StreamSubscription, Timer, unawaited;
 import 'dart:convert' show ascii, utf8;
 import 'dart:io' show Platform;
 import 'dart:math' show max, min;
@@ -84,8 +85,12 @@ class PlPlayerController with BlockConfigMixin {
   /// Commands, not status changes. Sync callers opt out per invocation; other
   /// callers (including lifecycle controls) are observable even if already paused.
   /// Delivered before awaiting the engine so intent cannot lag behind status.
-  final _playbackRequests = StreamController<bool>.broadcast(sync: true);
-  Stream<bool> get playbackRequests => _playbackRequests.stream;
+  final _playbackRequests =
+      StreamController<({bool playing, bool isInterrupt})>.broadcast(
+        sync: true,
+      );
+  Stream<({bool playing, bool isInterrupt})> get playbackRequests =>
+      _playbackRequests.stream;
 
   final Rx<DataStatus> dataStatus = Rx(.none);
 
@@ -569,7 +574,10 @@ class PlPlayerController with BlockConfigMixin {
       await _instance?.pause(notify: notify, isInterrupt: isInterrupt);
     } else {
       // Preserve the no-op engine path, but do not lose an explicit pause.
-      _instance?._playbackRequests.add(false);
+      _instance?._playbackRequests.add((
+        playing: false,
+        isInterrupt: isInterrupt,
+      ));
     }
   }
 
@@ -1406,12 +1414,28 @@ class PlPlayerController with BlockConfigMixin {
     if (duration.value != 0) {
       await seek();
     } else {
-      // if (kDebugMode) debugPrint('seek duration else');
+      // Duration not yet known (fresh source): defer the seek until the
+      // first duration emission, but keep the returned future open until
+      // the seek actually lands — sync callers (一起看) bound their settle
+      // window on seekTo() completing. Also bound the deferral so a dead
+      // source neither hangs the caller nor lands a stale seek later.
+      final completer = Completer<void>();
       _subForSeek?.cancel();
       _subForSeek = duration.listen((_) {
-        seek();
         _cancelSubForSeek();
+        unawaited(
+          seek().whenComplete(() {
+            if (!completer.isCompleted) completer.complete();
+          }),
+        );
       });
+      Timer(const Duration(seconds: 5), () {
+        if (!completer.isCompleted) {
+          _cancelSubForSeek();
+          completer.complete();
+        }
+      });
+      await completer.future;
     }
   }
 
@@ -1474,7 +1498,9 @@ class PlPlayerController with BlockConfigMixin {
     bool hideControls = true,
     bool isSync = false,
   }) async {
-    if (!isSync) _playbackRequests.add(true);
+    if (!isSync) {
+      _playbackRequests.add((playing: true, isInterrupt: false));
+    }
     if (_playerCount == 0) return;
     // 播放时自动隐藏控制条
     final showControlsOnNextPlay = _consumeShowControlsOnNextPlay();
@@ -1495,7 +1521,9 @@ class PlPlayerController with BlockConfigMixin {
     bool isInterrupt = false,
     bool isSync = false,
   }) async {
-    if (!isSync) _playbackRequests.add(false);
+    if (!isSync) {
+      _playbackRequests.add((playing: false, isInterrupt: isInterrupt));
+    }
     await _videoPlayerController?.pause();
     playerStatus.value = PlayerStatus.paused;
 

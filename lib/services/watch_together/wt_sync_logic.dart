@@ -58,6 +58,13 @@ class WtPlaybackLogic {
     required bool waitForLoadding,
     required bool isSettling,
     bool isThisMemberLoading = false,
+    // Overrides the loading-based seek suppression. The caller applies a
+    // run-length cap: a member whose buffering flag never clears still
+    // gets an occasional realign instead of drifting forever.
+    bool? suppressSeek,
+    // False during a post-external-pause cooldown (manual pause / audio
+    // interrupt): suppress auto-play, never auto-pause.
+    bool allowPlay = true,
   }) {
     double? seekTo;
     bool? play;
@@ -71,6 +78,9 @@ class WtPlaybackLogic {
     if (paused != localPaused) {
       play = !paused;
     }
+    if (!allowPlay && play == true) {
+      play = null;
+    }
 
     final target = paused ? room.currentTime : roomRealTime;
     final diff = (localTime - target).abs();
@@ -78,7 +88,8 @@ class WtPlaybackLogic {
     // A buffering member must not seek: the seek discards the buffer it
     // is filling, restarting the load and extending the room barrier —
     // the lag-amplification loop. It realigns in one shot once ready.
-    if (!isSettling && !isThisMemberLoading && diff > threshold) {
+    final blockSeek = suppressSeek ?? isThisMemberLoading;
+    if (!isSettling && !blockSeek && diff > threshold) {
       seekTo = target;
     }
 

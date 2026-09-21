@@ -165,7 +165,9 @@ class WtRoomUpdateEvent extends WtEvent {
 class WtMemberUpdateEvent extends WtEvent {
   final String tempUser;
   final bool isLoading;
-  final bool waitForLoadding;
+  // Nullable: a server omitting the field reports "unknown", not
+  // "barrier cleared" — callers must not treat null as false.
+  final bool? waitForLoadding;
   final int memberCount;
   const WtMemberUpdateEvent(
     this.tempUser,

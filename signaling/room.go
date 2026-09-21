@@ -64,6 +64,11 @@ type Member struct {
 	LoadingSince time.Time `json:"-"`
 	// JoinedAt orders members for host handover on host disconnect.
 	JoinedAt time.Time `json:"-"`
+	// LastHeartbeat is refreshed by every update_member (and join). The
+	// barrier aggregation ignores members whose heartbeat is stale
+	// (memberHeartbeatTTL) — a half-open/backgrounded client whose socket
+	// has not been reaped yet must not hold the room barrier.
+	LastHeartbeat time.Time `json:"-"`
 }
 
 // mu guards HostId, Playback, members and seen. Never acquire Hub.mu while
@@ -83,6 +88,10 @@ type Room struct {
 	seen map[string]bool
 	// loadingWait is captured from the owning RoomStore at creation.
 	loadingWait time.Duration
+	// lastMemberUpdateBarrier is the waitForLoadding value last published
+	// through the member_update path — lets setLoading broadcast a barrier
+	// flip (e.g. loading TTL expiry) even when no member flag changed.
+	lastMemberUpdateBarrier bool
 }
 
 func (r *Room) setHostLocked(id string) { r.HostId = id }
@@ -101,13 +110,22 @@ func (r *Room) IsProtected() bool { return r.Password != md5hex("") }
 func (r *Room) anyoneLoadingLocked() bool {
 	// End-of-video exemption with float tolerance: a member buffering on
 	// the tail (credits) must not stall the room. Strict equality missed
-	// real reports like currentTime=99.9 / duration=100.
-	if r.Playback.Duration > 0 &&
+	// real reports like currentTime=99.9 / duration=100. The duration must
+	// be a sane length — a degenerate duration=0.001 would exempt the
+	// barrier at every position.
+	if r.Playback.Duration >= 1.0 &&
 		r.Playback.CurrentTime >= r.Playback.Duration-0.5 {
 		return false
 	}
 	for _, m := range r.members {
+		// The host is excluded: its buffering already reaches members via
+		// reportedPaused in the playback payload, and counting it here
+		// would pause the host through its own member barrier.
+		if m.TempUser == r.HostId {
+			continue
+		}
 		if m.IsLoading &&
+			time.Since(m.LastHeartbeat) < memberHeartbeatTTL &&
 			time.Since(m.LoadingSince) < r.loadingWait &&
 			sameTarget(m.Target, r.Playback.Target) {
 			return true
@@ -170,8 +188,14 @@ func (r *Room) upsertMember(tempUser string) {
 }
 
 func (r *Room) upsertMemberLocked(tempUser string) {
-	if _, ok := r.members[tempUser]; !ok {
-		r.members[tempUser] = &Member{TempUser: tempUser, JoinedAt: time.Now()}
+	if m, ok := r.members[tempUser]; ok {
+		m.LastHeartbeat = time.Now()
+		return
+	}
+	r.members[tempUser] = &Member{
+		TempUser:      tempUser,
+		JoinedAt:      time.Now(),
+		LastHeartbeat: time.Now(),
 	}
 }
 
@@ -226,6 +250,14 @@ func (r *Room) setLoading(tempUser string, isLoading bool, target *Target) (ok, 
 	}
 	m.IsLoading = isLoading
 	m.Target = target
+	m.LastHeartbeat = time.Now()
+	// Barrier flips that are not member-state changes (loading TTL
+	// expiry, heartbeat staleness) still warrant a broadcast.
+	barrier := r.anyoneLoadingLocked()
+	if barrier != r.lastMemberUpdateBarrier {
+		changed = true
+		r.lastMemberUpdateBarrier = barrier
+	}
 	return true, changed
 }
 
@@ -291,6 +323,11 @@ var (
 	// room barrier — defense-in-depth behind the client's own give-up
 	// (~20s); covers old/buggy clients that report loading forever.
 	maxMemberLoadingWait = 60 * time.Second
+	// memberHeartbeatTTL (VT: IsJoined ~10s) bounds how fresh a member's
+	// update_member must be for its loading flag to hold the barrier —
+	// tighter than the conn-reap timeout so a zombie conn cannot stall
+	// the room for pongWait-scale durations.
+	memberHeartbeatTTL = 15 * time.Second
 )
 
 type RoomStore struct {
