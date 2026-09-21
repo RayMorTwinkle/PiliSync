@@ -220,6 +220,13 @@ class _WatchTogetherPageState extends State<WatchTogetherPage> {
                   ),
                   SwitchListTile(
                     contentPadding: EdgeInsets.zero,
+                    title: const Text('房主绝对优先'),
+                    subtitle: const Text('成员的缓冲/暂停绝不影响房主播放，成员自行追赶'),
+                    value: service.hostPriority.value,
+                    onChanged: (v) => service.hostPriorityEnabled = v,
+                  ),
+                  SwitchListTile(
+                    contentPadding: EdgeInsets.zero,
                     title: const Text('悬浮控制面板'),
                     subtitle: const Text('离开本页后显示一起看悬浮窗'),
                     value: service.floatingPanel.value,

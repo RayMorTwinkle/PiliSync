@@ -444,4 +444,28 @@ void main() {
     await Future<void>.delayed(Duration.zero);
     expect(service.role.value, WtRole.member);
   });
+  test('host-priority mode: member loading never pauses the host', () async {
+    final player = FakePlayer()..isPlaying = true;
+    final client = RecordingSignaling();
+    addTearDown(client.dispose);
+    final service = WatchTogetherService.forTesting(
+      player: player, client: client, clock: () => 100,
+    );
+    service.role.value = WtRole.host;
+    service.inRoom.value = true;
+    service.hostPriorityEnabled = true;
+    service.handleEventForTesting(
+        const WtMemberUpdateEvent('member', true, true, 2));
+    await Future<void>.delayed(Duration.zero);
+    // Absolute priority: the member's loading must not touch the host.
+    expect(player.isPlaying, isTrue);
+    expect(player.commands, isEmpty);
+
+    // Turn it off and the same event applies the barrier as usual.
+    service.hostPriorityEnabled = false;
+    service.handleEventForTesting(
+        const WtMemberUpdateEvent('member', true, true, 2));
+    await Future<void>.delayed(Duration.zero);
+    expect(player.isPlaying, isFalse);
+  }, timeout: const Timeout(Duration(seconds: 5)));
 }

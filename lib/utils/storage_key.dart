@@ -323,6 +323,7 @@ abstract final class SettingBoxKey {
       customAppFontNames = 'customAppFontNames';
 
   static const String wtLooseSync = 'wtLooseSync',
+      wtHostPriority = 'wtHostPriority',
       wtVoiceGate = 'wtVoiceGate',
       wtRemoteVolume = 'wtRemoteVolume',
       wtFloatingPanel = 'wtFloatingPanel',

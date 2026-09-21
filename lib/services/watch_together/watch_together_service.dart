@@ -164,6 +164,30 @@ class WatchTogetherService {
     } catch (_) {}
   }
 
+  // Host-priority mode: when on, nothing a member does can move the
+  // host's player — no barrier pause, no forced resume. Members still
+  // calibrate to the host as usual. Off by default (VT semantics).
+  RxBool? _hostPriorityRx;
+  RxBool get hostPriority =>
+      _hostPriorityRx ??= RxBool(_readHostPriority());
+
+  bool _readHostPriority() {
+    try {
+      return GStorage.setting.get(SettingBoxKey.wtHostPriority,
+              defaultValue: false) as bool? ??
+          false;
+    } catch (_) {
+      return false;
+    }
+  }
+
+  set hostPriorityEnabled(bool v) {
+    hostPriority.value = v;
+    try {
+      GStorage.setting.put(SettingBoxKey.wtHostPriority, v);
+    } catch (_) {}
+  }
+
   // In-room floating panel — off by default; the room page itself plus
   // this toggle are the controls.
   RxBool? _floatingPanelRx;
@@ -893,6 +917,9 @@ class WatchTogetherService {
 
   void _applyHostBarrier(bool waiting) {
     if (!role.value.isHost || !inRoom.value || !player.hasPlayer) return;
+    // Host-priority mode: member state never moves the host's player —
+    // no barrier pause, and since none was ever issued, no resume either.
+    if (hostPriority.value) return;
     final resume = hostIntent.updateBarrier(
       waiting: waiting,
       // A buffering host is not really playing — pausing it gains nothing
