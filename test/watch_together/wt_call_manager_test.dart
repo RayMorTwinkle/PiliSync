@@ -1,3 +1,5 @@
+import 'dart:async';
+
 import 'package:PiliPlus/services/watch_together/wt_call_manager.dart';
 import 'package:PiliPlus/services/watch_together/wt_models.dart';
 import 'package:PiliPlus/services/watch_together/wt_signaling_client.dart';
@@ -101,5 +103,34 @@ void main() {
     final idle = WtCallManager()..attach(client);
     idle.onDisconnected();
     expect(idle.state, WtCallState.idle);
+  });
+
+  test('start on a dead socket fails immediately instead of wedging (F12-f)', () {
+    // Previously start() entered `calling` and awaited offer creation —
+    // a dead socket meant the offer never went out and nothing ever
+    // timed out: permanent `calling`.
+    final client = RecordingSignaling();
+    addTearDown(client.dispose);
+    final call = WtCallManager()..attach(client);
+
+    unawaited(call.start('peer-A'));
+
+    expect(call.state, WtCallState.failed);
+    expect(client.signals, isEmpty, reason: 'no offer on a dead socket');
+  });
+
+  test('unbound calling alias resets when the sole peer leaves (F12-f)', () {
+    // The offer was sent to the "host" alias; the peer_left event names
+    // the real uuid — a strict equality check would keep us in calling
+    // forever. Unbound → any departure resets.
+    final client = RecordingSignaling();
+    addTearDown(client.dispose);
+    final call = WtCallManager()..attach(client);
+    call.seedForTesting(peerId: 'host', state: WtCallState.calling);
+
+    call.onPeerLeft('the-real-uuid');
+
+    expect(call.state, WtCallState.idle);
+    expect(client.signals.single.payload['kind'], 'bye');
   });
 }

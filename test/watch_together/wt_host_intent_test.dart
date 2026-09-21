@@ -22,7 +22,7 @@ void main() {
     final player = PlPlayerAdapter();
     final host = WtHostPlaybackIntent();
     final requests = <bool>[];
-    final sub = player.onPlaybackRequest((playing) {
+    final sub = player.onPlaybackRequest((playing, isInterrupt) {
       requests.add(playing);
       host.onPlaybackRequest(playing);
     });
@@ -48,7 +48,9 @@ void main() {
       final controller = PlPlayerController.ensureInstance();
       await controller.pause(isSync: true);
       final requests = <bool>[];
-      final sub = PlPlayerAdapter().onPlaybackRequest(requests.add);
+      final sub = PlPlayerAdapter().onPlaybackRequest(
+        (playing, isInterrupt) => requests.add(playing),
+      );
       addTearDown(sub.cancel);
       await PlPlayerController.pauseIfExists();
       expect(requests, [false]);

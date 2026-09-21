@@ -52,6 +52,11 @@ class WatchTogetherService {
   @visibleForTesting
   void handleEventForTesting(WtEvent event) => _handleEvent(event);
 
+  /// Test seam for the stale-snapshot freeze: simulates the
+  /// disconnected→reconnecting transition the connState listener sets.
+  @visibleForTesting
+  set awaitingFreshSnapshot(bool v) => _awaitingFreshSnapshot = v;
+
   static const _hostLoopInterval = Duration(seconds: 2);
   static const _memberLoopInterval = Duration(milliseconds: 500);
 
@@ -68,7 +73,7 @@ class WatchTogetherService {
   StreamSubscription<WtEvent>? _eventSub;
   StreamSubscription<WtConnectionState>? _connStateSub;
   StreamSubscription<void>? _statusSub;
-  StreamSubscription<bool>? _playbackReqSub;
+  StreamSubscription<({bool playing, bool isInterrupt})>? _playbackReqSub;
   Object? _statusIdentity;
   Timer? _loop;
   bool _ticking = false;
@@ -96,6 +101,20 @@ class WatchTogetherService {
   final connState = WtConnectionState.disconnected.obs;
   double _lastMemberReport = -double.infinity;
   double _lastOtherHostToast = -double.infinity;
+  // Between "socket connected" and "joined/first snapshot received" the
+  // cached room snapshot is stale — member calibration must stay frozen
+  // until an authoritative snapshot lands on the new socket.
+  bool _awaitingFreshSnapshot = false;
+  // External pause (manual or audio interrupt) on the member side earns
+  // a short cooldown during which calibrate will not force play again.
+  double _memberPauseCooldownUntil = -double.infinity;
+  // Navigate retry state: a failed/stuck member navigation is retried a
+  // few times instead of silently leaving the member on the wrong page.
+  bool _navigatePending = false;
+  double _lastNavigateAt = -double.infinity;
+  int _navigateRetries = 0;
+  static const _navigateRetryIntervalSeconds = 10.0;
+  static const _navigateMaxRetries = 5;
   final _memberCoordinator = WtMemberCoordinator();
   final RxBool debugOverlay = false.obs;
 
@@ -192,6 +211,11 @@ class WatchTogetherService {
       connState.value = state;
       if (state == WtConnectionState.disconnected) {
         call.onDisconnected();
+        if (inRoom.value) {
+          // The next connected socket will need a fresh authoritative
+          // snapshot before member calibration may resume.
+          _awaitingFreshSnapshot = true;
+        }
         final now = client.timeSync.localNow();
         if (inRoom.value && now - _lastDisconnectToast > 15) {
           _lastDisconnectToast = now;
@@ -226,9 +250,13 @@ class WatchTogetherService {
         if (!role.value.isHost) return;
         // Rising edge → broadcast the stall after the dwell confirms it
         // (instead of up to 2s later on the next tick, by which time
-        // members have over-run and get dragged backwards). Falling edge
+        // members have over-run and get dragged backwards). The dwell
+        // clock must start AT the edge — seeding it inside
+        // _hostBufferingDwelled at timer-fire time made the fast path
+        // dead code and delayed the stall to ~3s. Falling edge
         // broadcasts the resume immediately.
         if (buffering) {
+          _hostBufferingSince ??= clock?.call() ?? client.timeSync.now();
           _hostBufferingTimer?.cancel();
           _hostBufferingTimer = Timer(
             const Duration(seconds: 1),
@@ -237,25 +265,37 @@ class WatchTogetherService {
             },
           );
         } else {
+          _hostBufferingSince = null;
           _hostBufferingTimer?.cancel();
           _hostUpdate();
         }
       });
       if (player is WtPlaybackCommandSource) {
         _playbackReqSub = (player as WtPlaybackCommandSource)
-            .onPlaybackRequest((playing) {
+            .onPlaybackRequest((playing, isInterrupt) {
           if (role.value.isHost) {
-            hostIntent.onPlaybackRequest(playing);
+            // An audio-focus interrupt is not the user's intent to pause
+            // the room — feeding it into hostIntent would permanently
+            // cancel the barrier's auto-resume. The paused state itself
+            // still broadcasts via reportedPaused (!isPlaying).
+            if (!isInterrupt) hostIntent.onPlaybackRequest(playing);
             _hostUpdate();
-          } else if (playing &&
-              room.value?.waitForLoadding == true) {
-            // The member's manual play will be reverted by the next
-            // calibrate while the room waits — explain instead of
-            // silently fighting the user.
-            final now = client.timeSync.localNow();
-            if (now - _lastBarrierToast > 5) {
-              _lastBarrierToast = now;
-              SmartDialog.showToast('等待成员缓冲中');
+          } else {
+            if (!playing) {
+              // External pause (manual or interrupt): calibrate must not
+              // yank the member straight back to play — short cooldown.
+              _memberPauseCooldownUntil =
+                  (clock?.call() ?? client.timeSync.now()) + 10;
+            }
+            if (playing && room.value?.waitForLoadding == true) {
+              // The member's manual play will be reverted by the next
+              // calibrate while the room waits — explain instead of
+              // silently fighting the user.
+              final now = client.timeSync.localNow();
+              if (now - _lastBarrierToast > 5) {
+                _lastBarrierToast = now;
+                SmartDialog.showToast('等待成员缓冲中');
+              }
             }
           }
         });
@@ -272,14 +312,21 @@ class WatchTogetherService {
   }
 
   Future<void> _tick() async {
+    // Heartbeat runs OUTSIDE the _ticking gate: a hung calibrate (serial
+    // 3s command timeouts, up to ~9s) must not starve update_member,
+    // which is the only thing keeping our membership/loading state fresh.
+    _memberHeartbeat();
+    // Detect fake-alive sockets early (suspend/resume kills the
+    // connection long before the 30s ping timeout notices).
+    client.ensureAlive();
     if (_ticking) return;
     _ticking = true;
     try {
-      // Detect fake-alive sockets early (suspend/resume kills the
-      // connection long before the 30s ping timeout notices).
-      client.ensureAlive();
+      // Rebind player subscriptions on ticks for BOTH roles — a member's
+      // rebuilt player must not leave barrier toasts/pause cooldowns
+      // wired to a dead controller.
+      _ensureStatusSub();
       if (role.value.isHost) {
-        _ensureStatusSub();
         _hostTick();
       } else if (role.value.isMember) {
         await _memberTick();
@@ -299,9 +346,8 @@ class WatchTogetherService {
       }
     }
     _hostUpdate();
-    // Host is also a member: keep its heartbeat/loading state fresh so it
-    // does not vanish from memberCount or block the loading barrier.
-    _memberHeartbeat();
+    // Host is also a member: heartbeat is sent from _tick outside the
+    // _ticking gate so a hung calibrate cannot starve it.
   }
 
   void _hostUpdate() {
@@ -376,13 +422,14 @@ class WatchTogetherService {
   }
 
   Future<void> _memberTick() async {
-    _memberHeartbeat();
     // Offline: the last snapshot is stale — extrapolating and seeking
     // from it drifts the player arbitrarily far, and reconnect then
     // snaps back with a huge jump. Freeze calibration until a fresh
-    // authoritative snapshot arrives.
-    if (connState.value != WtConnectionState.connected) {
-      dbg('MTICK skip: offline (${connState.value})');
+    // authoritative snapshot arrives; the ~1RTT window between socket
+    // connect and `joined` still counts as stale.
+    if (connState.value != WtConnectionState.connected ||
+        _awaitingFreshSnapshot) {
+      dbg('MTICK skip: offline/fresh (${connState.value})');
       return;
     }
     final snap = room.value;
@@ -395,15 +442,57 @@ class WatchTogetherService {
       dbg('MTICK skip: live');
       return;
     }
+    final now = clock?.call() ?? client.timeSync.now();
+
+    final localTarget = _detectTarget();
+    final roomTarget = snap.playback.target;
+
+    // A failed member navigate leaves the user on the old page forever.
+    // While a navigate is pending and the local page provably differs
+    // (or still hasn't materialized), retry on a slow cadence.
+    if (_navigatePending && _currentTarget != null) {
+      final landed =
+          localTarget != null &&
+          !_isDifferentTarget(_currentTarget!, localTarget);
+      if (landed) {
+        _navigatePending = false;
+        _navigateRetries = 0;
+      } else if (now - _lastNavigateAt >= _navigateRetryIntervalSeconds) {
+        if (_navigateRetries < _navigateMaxRetries) {
+          _navigateRetries++;
+          _lastNavigateAt = now;
+          dbg('NAV retry #$_navigateRetries');
+          _executeNavigate(_currentTarget!);
+        } else {
+          // Give up until the next navigate event — do not fight a user
+          // who keeps backing out of the target page.
+          _navigatePending = false;
+          _navigateRetries = 0;
+          dbg('NAV gave up after $_navigateMaxRetries retries');
+        }
+      }
+    }
+
+    // A member on a DIFFERENT video page must not be calibrated against
+    // the room's playback — that drags an unrelated player around. Only
+    // skip when we can prove the mismatch (both targets known);
+    // a null local target (home/watch page) keeps legacy behavior.
+    if (localTarget != null &&
+        roomTarget != null &&
+        _isDifferentTarget(roomTarget, localTarget)) {
+      dbg('MTICK skip: off-target page');
+      return;
+    }
 
     await _memberCoordinator.tick(
       room: snap.playback,
       waitForLoading: snap.waitForLoadding,
-      now: clock?.call() ?? client.timeSync.now(),
+      now: now,
       player: player,
       reportLoading: _reportLoading,
       log: dbg,
       canSeek: clock != null || client.timeSync.hasValidSample,
+      allowPlay: now >= _memberPauseCooldownUntil,
     );
   }
 
@@ -417,10 +506,19 @@ class WatchTogetherService {
     final now = clock?.call() ?? client.timeSync.now();
     if (now - _lastMemberReport < 2.0) return;
     _lastMemberReport = now;
-    final loading = _effectiveLoading(now);
+    final loading = _effectiveLoading(now, _rawLoading(now));
     _lastReportedLoading = loading;
     client.updateMember(loading, target: _detectTarget());
   }
+
+  /// Raw member loading signal: buffering, but outside the post-seek
+  /// silence window (a sync-issued seek flushes the buffer — reporting
+  /// that refill as loading pauses the whole room for nothing).
+  bool _rawLoading(double now) =>
+      player.hasPlayer &&
+      !player.isLive &&
+      player.isBuffering &&
+      !_memberCoordinator.inSeekSilence(now);
 
   /// Host-side dwell for the reportedPaused buffering term: mpv's
   /// buffering flag flickers on marginal networks, and every flip-flop in
@@ -439,8 +537,7 @@ class WatchTogetherService {
   /// member whose player never finishes loading (dead network, failed
   /// source) releases the room's barrier instead of stalling the host
   /// forever. The run timer resets whenever buffering actually clears.
-  bool _effectiveLoading(double now) {
-    final raw = player.hasPlayer && !player.isLive && player.isBuffering;
+  bool _effectiveLoading(double now, bool raw) {
     if (!raw) {
       _bufferingSince = null;
       _loadingSince = null;
@@ -454,9 +551,12 @@ class WatchTogetherService {
     return now - since <= _loadingReportCapSeconds;
   }
 
-  void _reportLoading([bool? _]) {
+  /// The coordinator passes its own raw signal (buffering AND outside
+  /// the post-seek silence window); dwell+cap are applied on top.
+  /// Ignoring the parameter used to make the silence window dead code.
+  void _reportLoading(bool raw) {
     final now = clock?.call() ?? client.timeSync.now();
-    final loading = _effectiveLoading(now);
+    final loading = _effectiveLoading(now, raw);
     if (loading != _lastReportedLoading) {
       _lastReportedLoading = loading;
       client.updateMember(loading, target: _detectTarget());
@@ -468,6 +568,7 @@ class WatchTogetherService {
     switch (event) {
       case WtJoinedEvent():
         room.value = event.room;
+        _awaitingFreshSnapshot = false;
         _applyAuthoritativeRole(event.isHost);
         // After a reconnect the server lost our transient flags — force
         // the next heartbeat to re-report the current loading state.
@@ -488,10 +589,12 @@ class WatchTogetherService {
         }
       case WtUpdateAckEvent():
         room.value = event.room;
+        _awaitingFreshSnapshot = false;
         _applyAuthoritativeRole(event.room.isHost);
         _applyHostBarrier(event.room.waitForLoadding);
       case WtRoomUpdateEvent():
         room.value = event.room;
+        _awaitingFreshSnapshot = false;
         _applyAuthoritativeRole(event.room.isHost);
         _applyHostBarrier(event.room.waitForLoadding);
       case WtMemberUpdateEvent():
@@ -535,21 +638,26 @@ class WatchTogetherService {
 
   void _handleMemberUpdate(WtMemberUpdateEvent event) {
     // Keep the member-side barrier fresh too: without this, members lag
-    // ~2s behind the host's pause while peers are buffering.
+    // ~2s behind the host's pause while peers are buffering. The field
+    // is nullable: an older server that omits it must not be read as
+    // "barrier cleared" (?? false would erase a live barrier).
+    final waiting = event.waitForLoadding;
     final snap = room.value;
     if (snap != null &&
-        (snap.waitForLoadding != event.waitForLoadding ||
+        ((waiting != null && snap.waitForLoadding != waiting) ||
             snap.memberCount != event.memberCount)) {
       room.value = WtRoomSnapshot(
         name: snap.name,
         isHost: snap.isHost,
         isProtected: snap.isProtected,
         memberCount: event.memberCount,
-        waitForLoadding: event.waitForLoadding,
+        waitForLoadding: waiting ?? snap.waitForLoadding,
         playback: snap.playback,
       );
     }
-    _applyHostBarrier(event.waitForLoadding);
+    if (waiting != null) {
+      _applyHostBarrier(waiting);
+    }
   }
 
   /// Fold a barrier value carried by a non-snapshot message (navigate /
@@ -578,6 +686,11 @@ class WatchTogetherService {
     } else if (!isHost && role.value.isHost) {
       role.value = WtRole.member;
       hostIntent.reset();
+      // Demoted: drop host-side buffering state so a stale dwell clock
+      // or pending edge timer cannot fire into the member role.
+      _hostBufferingSince = null;
+      _hostBufferingTimer?.cancel();
+      _hostBufferingTimer = null;
       _startLoop();
     }
   }
@@ -589,8 +702,13 @@ class WatchTogetherService {
     final current = _detectTarget();
     if (current != null && !_isDifferentTarget(target, current)) {
       dbg('NAV skip: already on target');
+      _navigatePending = false;
+      _navigateRetries = 0;
       return false;
     }
+    _navigatePending = true;
+    _navigateRetries = 0;
+    _lastNavigateAt = clock?.call() ?? client.timeSync.now();
     _executeNavigate(target);
     return true;
   }
@@ -673,6 +791,21 @@ class WatchTogetherService {
       case 'wrong_password':
         SmartDialog.showToast('房间密码错误');
         leave(silent: true);
+      case 'room_full':
+        SmartDialog.showToast('房间已满');
+        leave(silent: true);
+      case 'already_bound':
+      case 'identity_in_use':
+        // Another live connection owns our tempUser identity — staying
+        // would split the room's view of us; leave instead of looping.
+        SmartDialog.showToast('身份冲突，已退出房间');
+        leave(silent: true);
+      case 'not_in_room':
+        // Server no longer has our membership (restart, raced reconnect,
+        // upsert self-heal failed): every heartbeat would just earn
+        // another not_in_room — leave cleanly instead of zombie-looping.
+        SmartDialog.showToast('房间状态异常，已退出');
+        leave(silent: true);
       case 'other_host_syncing':
         // We lost authority: stop acting as host instead of retrying the
         // rejected update every 2s and spamming toasts.
@@ -712,6 +845,10 @@ class WatchTogetherService {
     await _bufferingSub?.cancel();
     _bufferingSub = null;
     _statusIdentity = null;
+    // Send the WebRTC bye BEFORE the socket goes down — resetting after
+    // disconnect made the send a guaranteed drop and left the peer in
+    // "calling" until the ICE timeout noticed.
+    call.reset();
     await client.disconnect();
     client.timeSync.reset();
     role.value = WtRole.none;
@@ -731,9 +868,12 @@ class WatchTogetherService {
     _hostBufferingSince = null;
     _hostBufferingTimer?.cancel();
     _hostBufferingTimer = null;
+    _awaitingFreshSnapshot = false;
+    _memberPauseCooldownUntil = -double.infinity;
+    _navigatePending = false;
+    _navigateRetries = 0;
     _memberCoordinator.reset();
     debugLog.clear();
-    call.reset();
     if (!silent) {
       SmartDialog.showToast('已退出一起看');
     }

@@ -2,10 +2,10 @@ import 'dart:async';
 
 import 'package:PiliPlus/services/watch_together/wt_member_coordinator.dart';
 import 'package:PiliPlus/services/watch_together/wt_models.dart';
-import 'package:PiliPlus/services/watch_together/wt_player_port.dart';
+import 'package:PiliPlus/services/watch_together/wt_player_adapter.dart';
 import 'package:flutter_test/flutter_test.dart';
 
-class FakePlayer implements WtPlayerAdapter {
+class FakePlayer implements WtPlayerAdapter, WtPlaybackCommandSource {
   @override
   bool hasPlayer = true;
   @override
@@ -40,12 +40,34 @@ class FakePlayer implements WtPlayerAdapter {
   }
   @override
   Future<void> setSpeed(double value) async => speed = value;
+  final _bufferingCtl =
+      StreamController<bool>.broadcast(sync: true);
+  final _playbackReqCtl =
+      StreamController<({bool playing, bool isInterrupt})>.broadcast(
+        sync: true,
+      );
+
+  /// Simulate a buffering edge: flips the flag AND emits the event.
+  void setBuffering(bool v) {
+    isBuffering = v;
+    _bufferingCtl.add(v);
+  }
+
+  /// Simulate a user/system playback command (not a sync-issued one).
+  void emitPlaybackRequest({required bool playing, bool isInterrupt = false}) {
+    _playbackReqCtl.add((playing: playing, isInterrupt: isInterrupt));
+  }
+
   @override
   StreamSubscription<void> onStatusChanged(void Function(bool) cb) =>
       const Stream<void>.empty().listen(null);
   @override
   StreamSubscription<bool> onBufferingChanged(void Function(bool) cb) =>
-      const Stream<bool>.empty().listen(null);
+      _bufferingCtl.stream.listen(cb);
+  @override
+  StreamSubscription<({bool playing, bool isInterrupt})> onPlaybackRequest(
+    void Function(bool playing, bool isInterrupt) cb,
+  ) => _playbackReqCtl.stream.listen((r) => cb(r.playing, r.isInterrupt));
 
   void advance(double seconds) {
     if (isPlaying && !isBuffering) positionMs += seconds * 1000 * speed;
@@ -81,5 +103,85 @@ void main() {
       reason: 'commands=${player.commands}, logs=$logs, loading=$loading; '
           'clock: supplied server time, offset=0, RTT=not used');
     expect(loading.last, isFalse, reason: 'ready paused video is not buffering');
+  }, timeout: const Timeout(Duration(seconds: 5)));
+
+  test('buffering seek exemption is capped — wedged player still realigns', () async {
+    // F12-i: a member whose isBuffering never clears must still get an
+    // occasional realign seek — the report cap (20s) frees the room
+    // barrier, but without a matching cap on the seek exemption the
+    // member would drift forever.
+    final member = WtMemberCoordinator();
+    final player = FakePlayer()
+      ..isPlaying = true
+      ..isBuffering = true
+      ..positionMs = 0;
+    final logs = <String>[];
+    Future<void> tick(double now) => member.tick(
+      room: WtPlaybackState(
+        paused: false,
+        currentTime: 50,
+        duration: 120,
+        lastUpdateClientTime: now,
+      ),
+      waitForLoading: false,
+      now: now,
+      player: player,
+      reportLoading: (_) {},
+      log: logs.add,
+    );
+
+    await tick(100);
+    expect(
+      player.commands.where((c) => c.startsWith('seek')),
+      isEmpty,
+      reason: 'buffering member exempt from seeks within the cap',
+    );
+
+    // Past the 20s exemption cap: one realign seek is allowed.
+    await tick(125);
+    expect(
+      player.commands.where((c) => c.startsWith('seek')),
+      isNotEmpty,
+      reason: 'commands=${player.commands}',
+    );
+
+    // The realign seek restarted the exemption run — suppress again.
+    player.positionMs = 0;
+    await tick(127);
+    expect(
+      player.commands.where((c) => c.startsWith('seek')),
+      hasLength(1),
+      reason: 'commands=${player.commands}',
+    );
+  }, timeout: const Timeout(Duration(seconds: 5)));
+
+  test('allowPlay=false suppresses auto-play, never auto-pause', () async {
+    // F12-m member side: after an external pause (manual or audio
+    // interrupt) the member must not be yanked back to play instantly.
+    final member = WtMemberCoordinator();
+    final player = FakePlayer()
+      ..isPlaying = false
+      ..positionMs = 10000;
+    Future<void> tick(double now, {bool allowPlay = true}) => member.tick(
+      room: WtPlaybackState(
+        paused: false,
+        currentTime: 10,
+        duration: 120,
+        lastUpdateClientTime: now,
+      ),
+      waitForLoading: false,
+      now: now,
+      player: player,
+      reportLoading: (_) {},
+      log: (_) {},
+      allowPlay: allowPlay,
+    );
+
+    await tick(100, allowPlay: false);
+    expect(player.commands, isNot(contains('play')));
+
+    // Cooldown over → auto-play resumes.
+    await tick(101);
+    expect(player.commands, contains('play'));
   }, timeout: const Timeout(Duration(seconds: 5)));
 }

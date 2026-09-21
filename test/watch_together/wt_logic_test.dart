@@ -166,6 +166,50 @@ void main() {
       );
       expect(action.isEmpty, isTrue);
     });
+
+    test('suppressSeek=false overrides the loading exemption (F12-i cap)', () {
+      // A wedged-buffering member past the exemption cap must get a
+      // realign seek — suppressSeek=false lifts the blanket suppression.
+      final r = room(paused: false, currentTime: 100);
+      final action = WtPlaybackLogic.calibrate(
+        room: r,
+        waitForLoadding: false,
+        isSettling: false,
+        localPaused: false,
+        localTime: 50.0,
+        localRate: 1,
+        roomRealTime: 100.0,
+        suppressSeek: false,
+        isThisMemberLoading: true,
+      );
+      expect(action.seekTo, 100.0);
+    });
+
+    test('allowPlay=false suppresses only the auto-play edge (F12-m)', () {
+      final r = room(paused: false);
+      final cooled = WtPlaybackLogic.calibrate(
+        room: r,
+        waitForLoadding: false,
+        isSettling: false,
+        localPaused: true,
+        localTime: 100.0,
+        localRate: 1,
+        roomRealTime: 100.0,
+        allowPlay: false,
+      );
+      expect(cooled.play, isNull);
+
+      final allowed = WtPlaybackLogic.calibrate(
+        room: r,
+        waitForLoadding: false,
+        isSettling: false,
+        localPaused: true,
+        localTime: 100.0,
+        localRate: 1,
+        roomRealTime: 100.0,
+      );
+      expect(allowed.play, isTrue);
+    });
   });
 
   group('models', () {

@@ -19,6 +19,11 @@ class WtSignalingClient {
   Timer? _tsyncTimer;
   int _reconnectAttempt = 0;
   bool _disposed = false;
+  // Incremented on every _openSocket attempt: a socket/time-sync that
+  // finishes after a newer attempt must be dropped instead of replacing
+  // the live one (interleaved connects used to leak zombie conns and
+  // lose the periodic tsync timer's reference).
+  int _socketGen = 0;
 
   String serverBase = 'wt.raymor.top';
   bool _secure = true;
@@ -93,6 +98,7 @@ class WtSignalingClient {
 
   Future<void> _openSocket({bool autoJoin = true}) async {
     if (_disposed) return;
+    final gen = ++_socketGen;
     _setState(WtConnectionState.connecting);
     WebSocket socket;
     try {
@@ -100,13 +106,21 @@ class WtSignalingClient {
         '${_secure ? 'wss' : 'ws'}://$serverBase/ws',
       ).timeout(const Duration(seconds: 8));
     } catch (e) {
-      _setState(WtConnectionState.disconnected);
+      if (gen == _socketGen) _setState(WtConnectionState.disconnected);
       rethrow;
     }
-    if (_disposed) {
+    if (_disposed || gen != _socketGen) {
+      // A newer connect (or dispose) superseded this attempt while the
+      // handshake was in flight — do not leak the loser socket.
       await socket.close();
       return;
     }
+    // The min-RTT offset only ever improves within one route; a brand
+    // new socket means a new route (or a network change), so the old
+    // offset must not remain authoritative — resample from scratch.
+    timeSync.reset();
+    _tsyncTimer?.cancel();
+    _tsyncTimer = null;
     socket.pingInterval = const Duration(seconds: 30);
     _socket = socket;
     _setState(WtConnectionState.connected);
@@ -114,7 +128,7 @@ class WtSignalingClient {
     _listen(socket);
     unawaited(sampleServerTime());
     if (autoJoin) _sendJoin();
-    _startTimeSync();
+    _startTimeSync(gen);
   }
 
   void _listen(WebSocket socket) {
@@ -233,7 +247,9 @@ class WtSignalingClient {
           WtMemberUpdateEvent(
             msg['tempUser'] as String? ?? '',
             msg['isLoading'] as bool? ?? false,
-            msg['waitForLoadding'] as bool? ?? false,
+            // Nullable passthrough: a server that omits the field says
+            // "unknown", not "false" — do not erase a live barrier.
+            msg['waitForLoadding'] as bool?,
             (msg['memberCount'] as num?)?.toInt() ?? 0,
           ),
         );
@@ -345,12 +361,13 @@ class WtSignalingClient {
   // sendChat removed: the chat path is dead code client-side (no UI), the
   // server still relays chat for future use.
 
-  Future<void> _startTimeSync() async {
-    _tsyncTimer?.cancel();
+  Future<void> _startTimeSync(int gen) async {
     for (var i = 0; i < 3; i++) {
+      if (gen != _socketGen) return;
       _sendRaw({'type': 'tsync', 't': timeSync.localNow()});
       await Future<void>.delayed(const Duration(milliseconds: 100));
     }
+    if (gen != _socketGen) return;
     _tsyncTimer = Timer.periodic(const Duration(seconds: 60), (_) {
       _sendRaw({'type': 'tsync', 't': timeSync.localNow()});
     });

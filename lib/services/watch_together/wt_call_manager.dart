@@ -21,6 +21,11 @@ class WtCallManager {
   fwr.MediaStream? _remoteStream;
   String? _peerId;
   WtSignalingClient? _client;
+  // Answer timeout: without it a dropped offer or a peer that never
+  // answers leaves the state in "calling" forever (no ICE is created
+  // that could time out, so nothing else ever fires).
+  Timer? _answerTimer;
+  static const _answerTimeout = Duration(seconds: 15);
 
   // Signaling events are processed strictly in arrival order so an ICE
   // candidate can never overtake the offer/answer it depends on.
@@ -48,24 +53,41 @@ class WtCallManager {
     _speakerOn.value = true;
   }
 
+  void _armAnswerTimeout() {
+    _answerTimer?.cancel();
+    _answerTimer = Timer(_answerTimeout, () {
+      if (_state.value == WtCallState.calling) {
+        _teardown();
+        _state.value = WtCallState.failed;
+      }
+    });
+  }
+
   /// [peerId] may be a concrete member uuid or the server-side alias
   /// "peer" (the sole other member — the only mode the UI enables).
   /// Empty targets are rejected by the server and were the old
   /// broadcast-everyone bug.
   Future<void> start(String peerId) async {
     if (peerId.isEmpty || _state.value != WtCallState.idle) return;
+    final client = _client;
+    if (client == null || client.state != WtConnectionState.connected) {
+      // Dialing on a dead socket guarantees a stuck "calling" state —
+      // the offer is silently dropped and no ICE timeout ever fires.
+      _state.value = WtCallState.failed;
+      return;
+    }
     _peerId = peerId;
     _state.value = WtCallState.calling;
+    _armAnswerTimeout();
     try {
       await _ensureIceConfig();
       await _createPeer();
       await _getMic();
       final offer = await _pc!.createOffer();
       await _pc!.setLocalDescription(offer);
-      _sendSignal({
-        'kind': 'offer',
-        'sdp': offer.sdp,
-      });
+      if (!_sendSignal({'kind': 'offer', 'sdp': offer.sdp})) {
+        throw StateError('offer dropped: socket not open');
+      }
     } catch (_) {
       _teardown();
       _state.value = WtCallState.failed;
@@ -103,6 +125,7 @@ class WtCallManager {
     _pc!.onTrack = (event) {
       if (event.streams.isNotEmpty) {
         _remoteStream = event.streams[0];
+        _answerTimer?.cancel();
         _state.value = WtCallState.connected;
       }
     };
@@ -171,38 +194,54 @@ class WtCallManager {
       case 'bye':
         reset();
       case 'offer':
-        if (_state.value == WtCallState.idle) {
-          _peerId = event.from;
-          _state.value = WtCallState.calling;
-          await _ensureIceConfig();
-          await _createPeer();
-          await _getMic();
-        } else if (!_polite) {
-          // Glare: we are impolite, our offer wins — ignore theirs.
-          return;
-        } else {
-          // Glare: we are polite — roll back our local offer.
-          try {
-            await _pc!.setLocalDescription(
-              fwr.RTCSessionDescription(null, 'rollback'),
-            );
-          } catch (_) {}
-        }
-        await _pc!.setRemoteDescription(
-          fwr.RTCSessionDescription(payload['sdp'], 'offer'),
-        );
-        _hasRemoteDescription = true;
-        final answer = await _pc!.createAnswer();
-        await _pc!.setLocalDescription(answer);
-        _sendSignal({'kind': 'answer', 'sdp': answer.sdp});
-        await _flushCandidates();
-      case 'answer':
-        if (_pc != null && _state.value == WtCallState.calling) {
+        // SDP/mic failures used to escape _handleSignal and vanish into
+        // _signalWork.catchError — leaving the peer ringing forever.
+        try {
+          if (_state.value == WtCallState.idle) {
+            _peerId = event.from;
+            _state.value = WtCallState.calling;
+            _armAnswerTimeout();
+            await _ensureIceConfig();
+            await _createPeer();
+            await _getMic();
+          } else if (!_polite) {
+            // Glare: we are impolite, our offer wins — ignore theirs.
+            return;
+          } else {
+            // Glare: we are polite — roll back our local offer.
+            try {
+              await _pc!.setLocalDescription(
+                fwr.RTCSessionDescription(null, 'rollback'),
+              );
+            } catch (_) {}
+          }
           await _pc!.setRemoteDescription(
-            fwr.RTCSessionDescription(payload['sdp'], 'answer'),
+            fwr.RTCSessionDescription(payload['sdp'], 'offer'),
           );
           _hasRemoteDescription = true;
+          final answer = await _pc!.createAnswer();
+          await _pc!.setLocalDescription(answer);
+          if (!_sendSignal({'kind': 'answer', 'sdp': answer.sdp})) {
+            throw StateError('answer dropped: socket not open');
+          }
           await _flushCandidates();
+        } catch (_) {
+          _teardown();
+          _state.value = WtCallState.failed;
+        }
+      case 'answer':
+        if (_pc != null && _state.value == WtCallState.calling) {
+          try {
+            await _pc!.setRemoteDescription(
+              fwr.RTCSessionDescription(payload['sdp'], 'answer'),
+            );
+            _hasRemoteDescription = true;
+            _answerTimer?.cancel();
+            await _flushCandidates();
+          } catch (_) {
+            _teardown();
+            _state.value = WtCallState.failed;
+          }
         }
       case 'ice':
         if (payload['candidate'] == null) return;
@@ -235,6 +274,8 @@ class WtCallManager {
   }
 
   void _teardown() {
+    _answerTimer?.cancel();
+    _answerTimer = null;
     _localStream?.getTracks().forEach((t) => t.stop());
     _localStream?.dispose();
     _localStream = null;
@@ -246,7 +287,11 @@ class WtCallManager {
   }
 
   void onPeerLeft(String tempUser) {
-    if (_peerId == tempUser) {
+    if (_state.value == WtCallState.idle) return;
+    // Unbound alias ('peer'/'host'): the departing member was the only
+    // possible counterpart — its uuid never matched the alias, so the
+    // old equality check never fired and the call stayed in "calling".
+    if (!_bound || _peerId == tempUser) {
       reset();
     }
   }
@@ -279,9 +324,11 @@ class WtCallManager {
     await fwr.Helper.setSpeakerphoneOn(_speakerOn.value);
   }
 
-  void _sendSignal(Map<String, dynamic> payload) {
+  /// Returns false when the signal could not be sent (no bound peer or
+  /// socket not open) — callers that depend on delivery fail the call.
+  bool _sendSignal(Map<String, dynamic> payload) {
     final peer = _peerId;
-    if (peer == null || peer.isEmpty) return;
-    _client?.sendWebRTC(peer, payload);
+    if (peer == null || peer.isEmpty) return false;
+    return _client?.sendWebRTC(peer, payload) ?? false;
   }
 }

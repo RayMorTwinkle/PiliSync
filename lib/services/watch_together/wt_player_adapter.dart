@@ -7,8 +7,12 @@ import 'package:PiliPlus/plugin/pl_player/controller.dart';
 import 'package:PiliPlus/plugin/pl_player/models/play_status.dart';
 
 /// Optional command source, independent of playback status notifications.
+/// [isInterrupt] marks system-level pauses (audio focus loss, phone call)
+/// that must not be treated as the user's intent to pause the room.
 abstract interface class WtPlaybackCommandSource {
-  StreamSubscription<bool> onPlaybackRequest(void Function(bool playing) cb);
+  StreamSubscription<({bool playing, bool isInterrupt})> onPlaybackRequest(
+    void Function(bool playing, bool isInterrupt) cb,
+  );
 }
 
 class PlPlayerAdapter implements WtPlayerAdapter, WtPlaybackCommandSource {
@@ -48,8 +52,11 @@ class PlPlayerAdapter implements WtPlayerAdapter, WtPlaybackCommandSource {
 
   /// Subscribe again when [identity] changes, just like status notifications.
   @override
-  StreamSubscription<bool> onPlaybackRequest(void Function(bool playing) cb) =>
-      (_p?.playbackRequests ?? const Stream<bool>.empty()).listen(cb);
+  StreamSubscription<({bool playing, bool isInterrupt})> onPlaybackRequest(
+    void Function(bool playing, bool isInterrupt) cb,
+  ) => (_p?.playbackRequests ?? const Stream.empty()).listen(
+    (req) => cb(req.playing, req.isInterrupt),
+  );
 
   @override
   Future<void> seekToMs(double ms) async =>
