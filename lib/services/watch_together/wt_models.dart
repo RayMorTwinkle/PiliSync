@@ -220,6 +220,30 @@ class WtErrorEvent extends WtEvent {
   const WtErrorEvent(this.code);
 }
 
+/// A member asked for the host role — only delivered to the host.
+class WtTransferRequestEvent extends WtEvent {
+  final String from;
+  const WtTransferRequestEvent(this.from);
+}
+
+/// Ack that this client's transfer_request reached the host.
+class WtTransferRequestedEvent extends WtEvent {
+  const WtTransferRequestedEvent();
+}
+
+/// The host declined this client's transfer request.
+class WtTransferDeniedEvent extends WtEvent {
+  const WtTransferDeniedEvent();
+}
+
+/// Host role moved — the accompanying room snapshot carries the new
+/// per-conn isHost; this event exists for UX (toast).
+class WtHostChangedEvent extends WtEvent {
+  final String from;
+  final String to;
+  const WtHostChangedEvent(this.from, this.to);
+}
+
 enum WtConnectionState { disconnected, connecting, connected, failed }
 
 class WtSyncAction {

@@ -611,6 +611,7 @@ abstract final class PageUtils {
     dynamic epId,
     int? progress, // milliseconds
     bool off = false,
+    Map<String, dynamic>? extraArguments,
   }) async {
     try {
       SmartDialog.showLoading(msg: '资源获取中');
@@ -635,6 +636,7 @@ abstract final class PageUtils {
             extraArguments: {
               'pgcApi': true,
               'pgcItem': response,
+              ...?extraArguments,
             },
             off: off,
           );

@@ -8,6 +8,9 @@ import 'wt_member_coordinator_test.dart' show FakePlayer;
 class RecordingSignaling extends WtSignalingClient {
   final loadingReports = <bool>[];
   final playbackUpdates = <WtPlaybackState>[];
+  bool transferRequested = false;
+  final transferCalls = <String>[];
+  final denyCalls = <String>[];
   @override
   bool updateMember(bool isLoading, {WtTarget? target}) {
     loadingReports.add(isLoading);
@@ -16,6 +19,21 @@ class RecordingSignaling extends WtSignalingClient {
   @override
   bool updatePlayback(WtPlaybackState playback) {
     playbackUpdates.add(playback);
+    return true;
+  }
+  @override
+  bool requestHostTransfer() {
+    transferRequested = true;
+    return true;
+  }
+  @override
+  bool transferHost(String to) {
+    transferCalls.add(to);
+    return true;
+  }
+  @override
+  bool denyTransfer(String to) {
+    denyCalls.add(to);
     return true;
   }
 }
@@ -86,6 +104,9 @@ void main() {
       client: client,
       clock: () => now,
     );
+    // Strict mode: this test verifies the loading-run cap, not the
+    // loose-mode far-behind release (which would suppress earlier).
+    service.looseSync.value = false;
     service.role.value = WtRole.member;
     service.inRoom.value = true;
     service.room.value = WtRoomSnapshot(
@@ -190,6 +211,10 @@ void main() {
     final service = WatchTogetherService.forTesting(
       player: player, client: client, clock: () => now,
     );
+    // Strict mode: the frozen snapshot's extrapolated room time drifts
+    // past the 5s far-behind window in loose mode and would mute the
+    // report this test is verifying.
+    service.looseSync.value = false;
     service.role.value = WtRole.member;
     service.inRoom.value = true;
     service.room.value = WtRoomSnapshot(
@@ -369,4 +394,54 @@ void main() {
     expect(client.playbackUpdates.last.paused, isTrue,
         reason: 'updates=${client.playbackUpdates}');
   }, timeout: const Timeout(Duration(seconds: 5)));
+
+  test('member requestHostTransfer and host transferHostTo send frames', () async {
+    final client = RecordingSignaling();
+    addTearDown(client.dispose);
+    final service = WatchTogetherService.forTesting(
+      player: FakePlayer(), client: client, clock: () => 100,
+    );
+    service.inRoom.value = true;
+
+    service.role.value = WtRole.member;
+    service.requestHostTransfer();
+    expect(client.transferRequested, isTrue);
+
+    service.role.value = WtRole.host;
+    service.transferHostTo('peer');
+    expect(client.transferCalls, ['peer']);
+  });
+
+  test('host_changed snapshot promotes member and clears member residue', () async {
+    // After a transfer the promoted side must drop member-side state
+    // (pause cooldown would otherwise suppress its first host update).
+    final player = FakePlayer()..isPlaying = true;
+    final client = RecordingSignaling();
+    addTearDown(client.dispose);
+    final service = WatchTogetherService.forTesting(
+      player: player, client: client, clock: () => 100,
+    );
+    service.role.value = WtRole.member;
+    service.inRoom.value = true;
+    // Arm the external-pause cooldown, then get promoted.
+    player.emitPlaybackRequest(playing: false);
+    service.handleEventForTesting(const WtRoomUpdateEvent(
+      WtRoomSnapshot(name: 'test', isHost: true, isProtected: false,
+        memberCount: 2, waitForLoadding: false,
+        playback: WtPlaybackState(paused: false, currentTime: 10)),
+      100,
+    ));
+    await Future<void>.delayed(Duration.zero);
+    expect(service.role.value, WtRole.host);
+    // Demote again: member calibrate must NOT still be in the old
+    // cooldown — the promotion cleared it.
+    service.handleEventForTesting(const WtRoomUpdateEvent(
+      WtRoomSnapshot(name: 'test', isHost: false, isProtected: false,
+        memberCount: 2, waitForLoadding: false,
+        playback: WtPlaybackState(paused: false, currentTime: 10)),
+      100,
+    ));
+    await Future<void>.delayed(Duration.zero);
+    expect(service.role.value, WtRole.member);
+  });
 }

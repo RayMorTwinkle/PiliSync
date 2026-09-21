@@ -248,6 +248,12 @@ func (h *Hub) handle(c *Client, raw []byte) {
 		h.handleWebRTC(c, &msg)
 	case "chat":
 		h.handleChat(c, &msg)
+	case "transfer_request":
+		h.handleTransferRequest(c, &msg)
+	case "transfer":
+		h.handleTransfer(c, &msg)
+	case "transfer_deny":
+		h.handleTransferDeny(c, &msg)
 	case "pong":
 		_ = c.conn.SetReadDeadline(time.Now().Add(pongWait))
 	case "tsync":
@@ -471,7 +477,11 @@ func (h *Hub) handleUpdate(c *Client, msg *Incoming) {
 	}
 	isNew := room.markSeen(msg.TempUser)
 	if !room.IsHost(msg.TempUser) {
-		if isNew {
+		// Only a fresh, UNBOUND update-claim keeps VT's first-writer
+		// recovery semantics. A bound member (joined via `join`) must go
+		// through `transfer` — otherwise any member could silently seize
+		// the host role on its first update and bypass consent.
+		if isNew && roomName == "" {
 			room.mu.Lock()
 			room.setHostLocked(msg.TempUser)
 			room.mu.Unlock()
@@ -673,6 +683,151 @@ func (h *Hub) handleChat(c *Client, msg *Incoming) {
 		"text": text,
 		"ts":   now(),
 	}, nil)
+}
+
+// transferRequestCooldown rate-limits a member's transfer_request so a
+// spamming member cannot flood the host with approval prompts.
+const transferRequestCooldown = 30 * time.Second
+
+// deliverToUser fans a payload out to every conn bound as [user] in
+// [room] (F12-t: map order is random, a zombie duplicate conn must not
+// be able to swallow a signal the live conn never sees). Reports whether
+// at least one conn received it.
+func (h *Hub) deliverToUser(room *Room, user string, payload map[string]any) bool {
+	delivered := false
+	h.mu.Lock()
+	defer h.mu.Unlock()
+	for peer := range h.clients {
+		if peer.room == room && peer.tempUser == user {
+			peer.sendJSON(payload)
+			delivered = true
+		}
+	}
+	return delivered
+}
+
+// handleTransferRequest forwards a member's request for the host role to
+// the host's conns. Approval is expressed by the host sending `transfer`;
+// there is no server-side pending state beyond the per-member cooldown.
+func (h *Hub) handleTransferRequest(c *Client, msg *Incoming) {
+	roomName, from, room := h.binding(c)
+	if roomName == "" || room == nil {
+		c.sendJSON(map[string]any{"type": "error", "code": "not_in_room"})
+		return
+	}
+	room.mu.Lock()
+	if room.HostId == from {
+		room.mu.Unlock()
+		c.sendJSON(map[string]any{"type": "error", "code": "already_host"})
+		return
+	}
+	if time.Since(room.transferReqAt[from]) < transferRequestCooldown {
+		room.mu.Unlock()
+		c.sendJSON(map[string]any{"type": "error", "code": "rate_limited"})
+		return
+	}
+	room.transferReqAt[from] = time.Now()
+	host := room.HostId
+	room.mu.Unlock()
+
+	if !h.deliverToUser(room, host, map[string]any{
+		"type": "transfer_request",
+		"from": from,
+	}) {
+		c.sendJSON(map[string]any{"type": "error", "code": "host_offline"})
+		return
+	}
+	c.sendJSON(map[string]any{"type": "transfer_requested"})
+}
+
+// handleTransfer is the host's grant. `to` names the new host's tempUser;
+// "peer" resolves to the sole other member (2-person rooms). Broadcasts a
+// host_changed notice plus fresh per-conn room snapshots so every client
+// re-evaluates its role through the existing isHost path.
+func (h *Hub) handleTransfer(c *Client, msg *Incoming) {
+	roomName, from, room := h.binding(c)
+	if roomName == "" || room == nil {
+		c.sendJSON(map[string]any{"type": "error", "code": "not_in_room"})
+		return
+	}
+	if !room.IsHost(from) {
+		c.sendJSON(map[string]any{"type": "error", "code": "host_only"})
+		return
+	}
+	if msg.To == "" {
+		c.sendJSON(map[string]any{"type": "error", "code": "missing_to"})
+		return
+	}
+	to := msg.To
+	if to == "peer" {
+		// Sole other member — same resolution rule as webrtc "peer".
+		to = ""
+		h.mu.Lock()
+		for peer := range h.clients {
+			if peer.room == room && peer.tempUser != from {
+				if to != "" {
+					to = ""
+					break // ambiguous: more than one other member
+				}
+				to = peer.tempUser
+			}
+		}
+		h.mu.Unlock()
+		if to == "" {
+			c.sendJSON(map[string]any{"type": "error", "code": "peer_ambiguous"})
+			return
+		}
+	}
+	if to == from {
+		c.sendJSON(map[string]any{"type": "error", "code": "already_host"})
+		return
+	}
+	// The target must be an online, bound member — a stale tempUser would
+	// otherwise leave the room hostless until the next disconnect sweep.
+	room.mu.Lock()
+	_, isMember := room.members[to]
+	room.mu.Unlock()
+	h.mu.Lock()
+	online := false
+	for peer := range h.clients {
+		if peer.room == room && peer.tempUser == to {
+			online = true
+			break
+		}
+	}
+	h.mu.Unlock()
+	if !isMember || !online {
+		c.sendJSON(map[string]any{"type": "error", "code": "member_not_found"})
+		return
+	}
+	room.mu.Lock()
+	room.setHostLocked(to)
+	room.mu.Unlock()
+	h.broadcast(room, map[string]any{
+		"type": "host_changed",
+		"from": from,
+		"to":   to,
+	}, nil)
+	h.broadcastRoom(room, nil)
+	log.Printf("[host] transfer room=%s %s -> %s", roomName, from, to)
+}
+
+// handleTransferDeny forwards the host's refusal back to the requester.
+func (h *Hub) handleTransferDeny(c *Client, msg *Incoming) {
+	roomName, from, room := h.binding(c)
+	if roomName == "" || room == nil {
+		c.sendJSON(map[string]any{"type": "error", "code": "not_in_room"})
+		return
+	}
+	if !room.IsHost(from) {
+		c.sendJSON(map[string]any{"type": "error", "code": "host_only"})
+		return
+	}
+	if msg.To == "" {
+		c.sendJSON(map[string]any{"type": "error", "code": "missing_to"})
+		return
+	}
+	h.deliverToUser(room, msg.To, map[string]any{"type": "transfer_deny"})
 }
 
 func (h *Hub) readPump(c *Client) {

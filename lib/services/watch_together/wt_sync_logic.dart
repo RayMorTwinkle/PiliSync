@@ -65,6 +65,9 @@ class WtPlaybackLogic {
     // False during a post-external-pause cooldown (manual pause / audio
     // interrupt): suppress auto-play, never auto-pause.
     bool allowPlay = true,
+    // Loose mode widens the playing seek tolerance (5s). Paused rooms keep
+    // the tight threshold — alignment to the resume point still matters.
+    double? playingThreshold,
   }) {
     double? seekTo;
     bool? play;
@@ -84,7 +87,10 @@ class WtPlaybackLogic {
 
     final target = paused ? room.currentTime : roomRealTime;
     final diff = (localTime - target).abs();
-    final threshold = paused ? pausedSeekThreshold : playingSeekThreshold;
+    final threshold =
+        paused
+            ? pausedSeekThreshold
+            : (playingThreshold ?? playingSeekThreshold);
     // A buffering member must not seek: the seek discards the buffer it
     // is filling, restarting the load and extending the room barrier —
     // the lag-amplification loop. It realigns in one shot once ready.

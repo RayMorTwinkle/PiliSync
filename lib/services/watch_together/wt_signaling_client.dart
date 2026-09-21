@@ -294,6 +294,19 @@ class WtSignalingClient {
             (msg['ts'] as num?)?.toDouble() ?? 0,
           ),
         );
+      case 'transfer_request':
+        _events.add(WtTransferRequestEvent(msg['from'] as String? ?? ''));
+      case 'transfer_requested':
+        _events.add(const WtTransferRequestedEvent());
+      case 'transfer_deny':
+        _events.add(const WtTransferDeniedEvent());
+      case 'host_changed':
+        _events.add(
+          WtHostChangedEvent(
+            msg['from'] as String? ?? '',
+            msg['to'] as String? ?? '',
+          ),
+        );
       case 'room_closed':
         _events.add(const WtErrorEvent('room_closed'));
       case 'error':
@@ -355,6 +368,39 @@ class WtSignalingClient {
       'tempUser': tempUser,
       'to': to,
       'payload': payload,
+    });
+  }
+
+  /// Member → ask the host for the role (forwarded server-side).
+  bool requestHostTransfer() {
+    return _sendRaw({
+      'type': 'transfer_request',
+      'room': roomName,
+      'password': password,
+      'tempUser': tempUser,
+    });
+  }
+
+  /// Host → hand the role to [to] (a tempUser, or 'peer' in 2-person
+  /// rooms). The server rebroadcasts per-conn isHost snapshots.
+  bool transferHost(String to) {
+    return _sendRaw({
+      'type': 'transfer',
+      'room': roomName,
+      'password': password,
+      'tempUser': tempUser,
+      'to': to,
+    });
+  }
+
+  /// Host → decline a member's transfer_request.
+  bool denyTransfer(String to) {
+    return _sendRaw({
+      'type': 'transfer_deny',
+      'room': roomName,
+      'password': password,
+      'tempUser': tempUser,
+      'to': to,
     });
   }
 

@@ -53,6 +53,30 @@ class _WatchTogetherPageState extends State<WatchTogetherPage> {
     if (mounted) setState(() {});
   }
 
+  void _confirmTransfer() {
+    SmartDialog.show(
+      builder: (context) => AlertDialog(
+        title: const Text('转让房主'),
+        content: const Text('将房主身份转让给对方？转让后你将跟随对方播放。'),
+        actions: [
+          TextButton(
+            onPressed: SmartDialog.dismiss,
+            child: const Text('取消'),
+          ),
+          FilledButton(
+            onPressed: () {
+              SmartDialog.dismiss();
+              // 'peer' resolves server-side to the sole other member —
+              // the button is only shown in 2-person rooms.
+              service.transferHostTo('peer');
+            },
+            child: const Text('确认转让'),
+          ),
+        ],
+      ),
+    );
+  }
+
   @override
   Widget build(BuildContext context) {
     return SimpleScaffold(
@@ -181,11 +205,39 @@ class _WatchTogetherPageState extends State<WatchTogetherPage> {
           ),
         ),
         const SizedBox(height: 12),
+        Card(
+          child: Padding(
+            padding: const EdgeInsets.symmetric(horizontal: 16, vertical: 4),
+            child: Obx(
+              () => SwitchListTile(
+                contentPadding: EdgeInsets.zero,
+                title: const Text('宽松同步模式'),
+                subtitle: const Text('容忍5秒进度差；落后过多的一方不再拖住对方，自行追赶'),
+                value: service.looseSync.value,
+                onChanged: (v) => service.looseSyncEnabled = v,
+              ),
+            ),
+          ),
+        ),
+        const SizedBox(height: 12),
         if (role.isHost)
           OutlinedButton.icon(
-            onPressed: () => service.navigateToCurrent(),
+            onPressed: service.navigateToCurrent,
             icon: const Icon(Icons.sync),
             label: const Text('邀请对方看当前视频'),
+          ),
+        if (role.isHost &&
+            (room?.memberCount ?? 0) == 2)
+          OutlinedButton.icon(
+            onPressed: _confirmTransfer,
+            icon: const Icon(Icons.swap_horiz),
+            label: const Text('转让房主'),
+          ),
+        if (role.isMember)
+          OutlinedButton.icon(
+            onPressed: service.requestHostTransfer,
+            icon: const Icon(Icons.person_add_alt),
+            label: const Text('申请成为房主'),
           ),
         const SizedBox(height: 12),
         _voiceButton(),

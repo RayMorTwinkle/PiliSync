@@ -10,9 +10,11 @@ import 'package:PiliPlus/services/watch_together/wt_player_adapter.dart';
 import 'package:PiliPlus/services/watch_together/wt_playback_coordinator.dart';
 import 'package:PiliPlus/services/watch_together/wt_signaling_client.dart';
 import 'package:PiliPlus/services/watch_together/wt_member_coordinator.dart';
+import 'package:PiliPlus/services/watch_together/wt_sync_logic.dart';
 import 'package:PiliPlus/utils/page_utils.dart';
 import 'package:PiliPlus/utils/storage.dart';
 import 'package:flutter_smart_dialog/flutter_smart_dialog.dart';
+import 'package:material_ui/material_ui.dart';
 import 'package:get/get.dart';
 import 'package:uuid/uuid.dart';
 
@@ -133,6 +135,32 @@ class WatchTogetherService {
 
   String get serverUrl =>
       GStorage.setting.get('wtServerUrl') as String? ?? 'wss://wt.raymor.top';
+
+  /// Loose sync mode: 5s play tolerance instead of 1s, and a member that
+  /// falls >5s behind stops holding the room barrier — it releases the
+  /// fluent side and chases the host with rate-limited catch-up seeks.
+  /// Default on: strict 1s alignment is only worth it on good networks.
+  RxBool? _looseSyncRx;
+  RxBool get looseSync => _looseSyncRx ??= RxBool(_readLooseSync());
+
+  // GStorage.setting is a `late` field that unit tests never init —
+  // fall back to the default rather than crashing the tick.
+  bool _readLooseSync() {
+    try {
+      return GStorage.setting.get('wtLooseSync', defaultValue: true)
+              as bool? ??
+          true;
+    } catch (_) {
+      return true;
+    }
+  }
+
+  set looseSyncEnabled(bool v) {
+    looseSync.value = v;
+    try {
+      GStorage.setting.put('wtLooseSync', v);
+    } catch (_) {}
+  }
 
   double? get memberLastSeekDebug => _memberCoordinator.lastSeek;
 
@@ -462,7 +490,10 @@ class WatchTogetherService {
           _navigateRetries++;
           _lastNavigateAt = now;
           dbg('NAV retry #$_navigateRetries');
-          _executeNavigate(_currentTarget!);
+          _executeNavigate(
+            _currentTarget!,
+            progressMs: _navProgressMs(_currentTarget!),
+          );
         } else {
           // Give up until the next navigate event — do not fight a user
           // who keeps backing out of the target page.
@@ -493,6 +524,7 @@ class WatchTogetherService {
       log: dbg,
       canSeek: clock != null || client.timeSync.hasValidSample,
       allowPlay: now >= _memberPauseCooldownUntil,
+      looseSync: looseSync.value,
     );
   }
 
@@ -631,9 +663,63 @@ class WatchTogetherService {
         unawaited(call.onSignal(event));
       case WtChatEvent():
         break;
+      case WtTransferRequestEvent():
+        _showTransferRequest(event.from);
+      case WtTransferRequestedEvent():
+        SmartDialog.showToast('已向房主发送申请');
+      case WtTransferDeniedEvent():
+        SmartDialog.showToast('房主拒绝了转让申请');
+      case WtHostChangedEvent():
+        // The role flip itself arrives via the room snapshot's per-conn
+        // isHost (handled by _applyAuthoritativeRole); this is just UX.
+        SmartDialog.showToast(
+          event.to == client.tempUser ? '你已成为房主' : '房主已变更',
+        );
       case WtErrorEvent():
         _handleError(event.code);
     }
+  }
+
+  /// Member → ask the host for the host role.
+  void requestHostTransfer() {
+    if (!inRoom.value || !role.value.isMember) return;
+    if (!client.requestHostTransfer()) {
+      SmartDialog.showToast('连接已断开，无法发送申请');
+    }
+  }
+
+  /// Host → hand the role to [to] ('peer' = the sole other member).
+  void transferHostTo([String to = 'peer']) {
+    if (!inRoom.value || !role.value.isHost) return;
+    if (!client.transferHost(to)) {
+      SmartDialog.showToast('连接已断开，无法转让');
+    }
+  }
+
+  void _showTransferRequest(String from) {
+    if (!role.value.isHost) return; // a stale request for the old host
+    SmartDialog.show(
+      builder: (context) => AlertDialog(
+        title: const Text('房主转让申请'),
+        content: const Text('有成员申请成为房主，是否同意？'),
+        actions: [
+          TextButton(
+            onPressed: () {
+              SmartDialog.dismiss();
+              client.denyTransfer(from);
+            },
+            child: const Text('拒绝'),
+          ),
+          FilledButton(
+            onPressed: () {
+              SmartDialog.dismiss();
+              transferHostTo(from);
+            },
+            child: const Text('同意转让'),
+          ),
+        ],
+      ),
+    );
   }
 
   void _handleMemberUpdate(WtMemberUpdateEvent event) {
@@ -682,6 +768,14 @@ class WatchTogetherService {
   void _applyAuthoritativeRole(bool isHost) {
     if (isHost && !role.value.isHost) {
       role.value = WtRole.host;
+      // Promotion to host: member-side residue (pause cooldown, seek
+      // settle windows, the loading run clock) would leak into host
+      // logic. Refresh _currentTarget from the actual page — a member
+      // who wandered off the room target must not broadcast it.
+      _memberPauseCooldownUntil = -double.infinity;
+      _memberCoordinator.reset();
+      _currentTarget = _detectTarget() ?? _currentTarget;
+      _reportLoading(false);
       _startLoop();
     } else if (!isHost && role.value.isHost) {
       role.value = WtRole.member;
@@ -699,6 +793,11 @@ class WatchTogetherService {
   /// the member is already on — reconnects must not rebuild the player.
   bool _followNavigate(WtTarget target) {
     _currentTarget = target;
+    // A room-driven navigation starts a fresh sync context: a pause
+    // cooldown armed on the previous page (manual pause, audio
+    // interrupt, or a leaked setDataSource pause) must not carry over
+    // and block auto-play on the new video.
+    _memberPauseCooldownUntil = -double.infinity;
     final current = _detectTarget();
     if (current != null && !_isDifferentTarget(target, current)) {
       dbg('NAV skip: already on target');
@@ -709,8 +808,25 @@ class WatchTogetherService {
     _navigatePending = true;
     _navigateRetries = 0;
     _lastNavigateAt = clock?.call() ?? client.timeSync.now();
-    _executeNavigate(target);
+    _executeNavigate(target, progressMs: _navProgressMs(target));
     return true;
+  }
+
+  /// Position to open a followed page at: the room's extrapolated
+  /// position when the target matches the authoritative snapshot (the
+  /// member then buffers straight at the room position instead of
+  /// opening at local history and double-filling the cache on the
+  /// sync seek). A new target starts at 0 — passing it explicitly also
+  /// suppresses the page's own history-resume seek.
+  int _navProgressMs(WtTarget target) {
+    final snap = room.value?.playback;
+    if (snap?.target == null || _isDifferentTarget(target, snap!.target!)) {
+      return 0;
+    }
+    final secs = client.timeSync.hasValidSample
+        ? WtPlaybackLogic.extrapolateCurrent(snap, client.timeSync.now())
+        : snap.currentTime;
+    return (secs * 1000).round();
   }
 
   void _applyHostBarrier(bool waiting) {
@@ -738,7 +854,7 @@ class WatchTogetherService {
     }
   }
 
-  void _executeNavigate(WtTarget target) {
+  void _executeNavigate(WtTarget target, {int? progressMs}) {
     // Only replace a page that IS a watch target. off:true on any other
     // route pops it — and popping '/' disposes MainPage, whose dispose()
     // calls GStorage.close(): every Hive box closes, the video detail
@@ -756,6 +872,11 @@ class WatchTogetherService {
         epId: target.epid,
         seasonId: target.seasonId,
         title: target.title,
+        progress: progressMs,
+        // wtFollow forces autoplay on the destination page: Pref's
+        // autoPlayEnable defaults to false, and without it the engine is
+        // never created — the member stays "phantom playing" forever.
+        extraArguments: const {'wtFollow': true},
         off: off,
       );
     } else if (target.epid != null || target.seasonId != null) {
@@ -764,6 +885,8 @@ class WatchTogetherService {
       PageUtils.viewPgc(
         epId: target.epid,
         seasonId: target.seasonId,
+        progress: progressMs,
+        extraArguments: const {'wtFollow': true},
         off: off,
       );
     }

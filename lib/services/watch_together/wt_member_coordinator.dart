@@ -14,9 +14,15 @@ class WtMemberCoordinator {
   // exemption is capped just like the loading report is, otherwise a
   // permanently-stuck buffering flag would also block realignment.
   double? _loadingRunStart;
+  // Loose mode: a member >5s behind stops reporting loading (releases the
+  // room barrier) and may seek through buffering — rate-limited so a slow
+  // network is not asked to refetch every tick.
+  double _lastCatchupAt = -double.infinity;
   static const _settleSeconds = 1.5;
   static const _seekLoadingSilenceSeconds = 2.0;
   static const _seekSuppressionCapSeconds = 20.0;
+  static const _farBehindSeconds = 5.0;
+  static const _catchupIntervalSeconds = 4.0;
   late WtPlayerAdapter player;
   late void Function(String) dbg;
 
@@ -25,6 +31,7 @@ class WtMemberCoordinator {
     _memberLastSeek = null;
     _lastSeekAt = -double.infinity;
     _loadingRunStart = null;
+    _lastCatchupAt = -double.infinity;
   }
 
   /// True while inside the post-seek silence window — a sync-issued seek
@@ -47,6 +54,9 @@ class WtMemberCoordinator {
     // False during the member's post-external-pause cooldown (manual
     // pause or audio interrupt): suppress auto-play, never auto-pause.
     bool allowPlay = true,
+    // Loose sync: 5s play tolerance; a member >5s behind releases the
+    // barrier and chases with rate-limited catch-up seeks.
+    bool looseSync = false,
   }) async {
     this.player = player;
     dbg = log;
@@ -76,8 +86,24 @@ class WtMemberCoordinator {
     final loadingRun = _loadingRunStart == null
         ? 0.0
         : now - _loadingRunStart!;
+    // Loose mode: a member >5s behind a PLAYING room stops holding the
+    // barrier (its loading is no longer reported) and may issue catch-up
+    // seeks even while buffering — rate-limited to one per interval so a
+    // chronically slow member is not told to refetch constantly. Only
+    // meaningful once a valid time sample exists (canSeek gate below).
+    final behind = roomRealTime - localTime;
+    // canSeek doubles as the "valid clock domain" gate: without a time
+    // sample roomRealTime is extrapolated from a meaningless `now`, and a
+    // garbage farBehind would wrongly mute the member's loading report.
+    final farBehind =
+        looseSync && !room.paused && canSeek && behind > _farBehindSeconds;
+    final catchupReady =
+        farBehind &&
+        !isSettling &&
+        now - _lastCatchupAt >= _catchupIntervalSeconds;
     final suppressSeek =
-        player.isBuffering && loadingRun < _seekSuppressionCapSeconds;
+        player.isBuffering && loadingRun < _seekSuppressionCapSeconds &&
+        !catchupReady;
 
     var action = WtPlaybackLogic.calibrate(
       room: room,
@@ -90,6 +116,7 @@ class WtMemberCoordinator {
       isSettling: isSettling,
       suppressSeek: suppressSeek,
       allowPlay: allowPlay,
+      playingThreshold: looseSync ? _farBehindSeconds : null,
     );
     if (!canSeek && action.seekTo != null) {
       dbg('SEEK suppressed: no valid time sample');
@@ -101,10 +128,6 @@ class WtMemberCoordinator {
     if (!action.isEmpty) {
       if (action.seekTo != null) {
         _memberLastSeek = action.seekTo!;
-        _lastSeekAt = now;
-        // The seek discards whatever buffer accumulated — restart the
-        // exemption run so the next allowed realign is another cap away.
-        _loadingRunStart = now;
       } else {
         // any successful non-seek round clears the pending-seek marker
         _memberLastSeek = null;
@@ -113,13 +136,28 @@ class WtMemberCoordinator {
         'CALIBRATE ${action}local=$localTime room=${room.currentTime}'
         '(${room.paused ? "paused" : "playing"})',
       );
+      // Measure when the seek actually lands: settle/silence must start
+      // then, not at issue time — a 3s-timeout seek issued with _lastSeekAt
+      // at tick time would silently shorten the protection window.
+      final sw = Stopwatch()..start();
       await _executeAction(action);
+      if (action.seekTo != null) {
+        final landed = now + sw.elapsedMilliseconds / 1000;
+        _lastSeekAt = landed;
+        _lastCatchupAt = landed;
+        // The seek discards whatever buffer accumulated — restart the
+        // exemption run so the next allowed realign is another cap away.
+        _loadingRunStart = landed;
+      }
     }
 
     // Read AFTER commands; do not reuse the pre-seek position as readiness.
     // Seek-induced refills get a silence window: mpv flushes its buffer on
     // every sync seek, and reporting that dip would pause the whole room.
-    final loading = player.isBuffering && !inSeekSilence(now);
+    // A far-behind member in loose mode stops holding the barrier — the
+    // fluent side keeps playing while this member chases.
+    final loading =
+        player.isBuffering && !inSeekSilence(now) && !farBehind;
     reportLoading(loading);
   }
 

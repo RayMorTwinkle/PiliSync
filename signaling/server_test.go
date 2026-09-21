@@ -217,11 +217,20 @@ func TestFullFlow(t *testing.T) {
 	send(member, updateMsg("r1", "pw1", "hostA", 55))
 	waitForErr(t, member, "not_in_room", 2*time.Second)
 
-	// 10. VT semantics: member's first update with OWN tempUser takes over
+	// 10. F13: a BOUND member's update can no longer seize the room —
+	// host changes go through `transfer` (consent) or disconnect handover.
+	send(member, updateMsg("r1", "pw1", "memB", 60))
+	waitForErr(t, member, "other_host_syncing", 2*time.Second)
+	// Explicit host transfer promotes the member instead.
+	send(host, map[string]any{
+		"type": "transfer", "room": "r1", "tempUser": "hostA", "to": "memB",
+	})
+	waitFor(t, member, "host_changed", 2*time.Second)
+	waitFor(t, member, "room", 2*time.Second)
 	send(member, updateMsg("r1", "pw1", "memB", 60))
 	ack = waitFor(t, member, "update_ack", 2*time.Second)
 	if ack["room"].(map[string]any)["isHost"] != true {
-		t.Fatalf("member takeover should be marked isHost")
+		t.Fatalf("transferred member should be marked isHost")
 	}
 	// former host is now the loser
 	send(host, updateMsg("r1", "pw1", "hostA", 61))
@@ -1124,4 +1133,156 @@ func TestFieldLengthCaps(t *testing.T) {
 		"payload": map[string]any{"sdp": strings.Repeat("s", maxWebRTCLen)},
 	})
 	waitForErr(t, member, "bad_request", 2*time.Second)
+}
+
+// F13: member → transfer_request → host approves via transfer — the role
+// flips server-side and both conns get fresh per-conn isHost snapshots.
+func TestHostTransferFlow(t *testing.T) {
+	srv := startTestServer(t)
+	defer srv.Close()
+
+	host := dial(t, srv)
+	defer host.Close()
+	member := dial(t, srv)
+	defer member.Close()
+
+	send(host, updateMsgWithTarget("rt", "pw1", "hostA", 10))
+	waitFor(t, host, "update_ack", 2*time.Second)
+	send(member, map[string]any{"type": "join", "room": "rt", "password": "pw1", "tempUser": "memB"})
+	waitFor(t, member, "joined", 2*time.Second)
+	waitFor(t, host, "peer_joined", 2*time.Second)
+
+	// Member requests the host role; host sees who asked.
+	send(member, map[string]any{"type": "transfer_request", "room": "rt", "tempUser": "memB"})
+	waitFor(t, member, "transfer_requested", 2*time.Second)
+	req := waitFor(t, host, "transfer_request", 2*time.Second)
+	if req["from"] != "memB" {
+		t.Fatalf("transfer_request must name the requester, got %v", req)
+	}
+
+	// Cooldown: an immediate second request is rate-limited.
+	send(member, map[string]any{"type": "transfer_request", "room": "rt", "tempUser": "memB"})
+	waitForErr(t, member, "rate_limited", 2*time.Second)
+
+	// Host approves by transferring to the requester's tempUser.
+	send(host, map[string]any{"type": "transfer", "room": "rt", "tempUser": "hostA", "to": "memB"})
+	waitFor(t, host, "host_changed", 2*time.Second)
+	waitFor(t, member, "host_changed", 2*time.Second)
+	snapM := waitFor(t, member, "room", 2*time.Second)
+	if snapM["room"].(map[string]any)["isHost"] != true {
+		t.Fatalf("transferee must see isHost=true, got %v", snapM)
+	}
+	snapH := waitFor(t, host, "room", 2*time.Second)
+	if snapH["room"].(map[string]any)["isHost"] != false {
+		t.Fatalf("old host must see isHost=false, got %v", snapH)
+	}
+
+	// Authority moved: the new host's update acks, the old host's update
+	// is rejected with other_host_syncing.
+	send(member, updateMsg("rt", "pw1", "memB", 20))
+	if ack := waitFor(t, member, "update_ack", 2*time.Second); ack["room"].(map[string]any)["isHost"] != true {
+		t.Fatalf("new host update should ack isHost=true")
+	}
+	send(host, updateMsg("rt", "pw1", "hostA", 21))
+	waitForErr(t, host, "other_host_syncing", 2*time.Second)
+}
+
+// F13: 'peer' resolves to the sole other member in a 2-person room.
+func TestTransferPeerAlias(t *testing.T) {
+	srv := startTestServer(t)
+	defer srv.Close()
+
+	host := dial(t, srv)
+	defer host.Close()
+	member := dial(t, srv)
+	defer member.Close()
+
+	send(host, updateMsgWithTarget("rp", "pw1", "hostA", 10))
+	waitFor(t, host, "update_ack", 2*time.Second)
+	send(member, map[string]any{"type": "join", "room": "rp", "password": "pw1", "tempUser": "memB"})
+	waitFor(t, member, "joined", 2*time.Second)
+	waitFor(t, host, "peer_joined", 2*time.Second)
+
+	send(host, map[string]any{"type": "transfer", "room": "rp", "tempUser": "hostA", "to": "peer"})
+	hc := waitFor(t, member, "host_changed", 2*time.Second)
+	if hc["to"] != "memB" {
+		t.Fatalf("peer alias must resolve to the other member, got %v", hc)
+	}
+	snap := waitFor(t, member, "room", 2*time.Second)
+	if snap["room"].(map[string]any)["isHost"] != true {
+		t.Fatalf("peer transferee must see isHost=true")
+	}
+}
+
+// F13: guard rails — non-host cannot transfer, unknown/self targets are
+// rejected, 'peer' is ambiguous with 3+ members.
+func TestTransferGuards(t *testing.T) {
+	srv := startTestServer(t)
+	defer srv.Close()
+
+	host := dial(t, srv)
+	defer host.Close()
+	m1 := dial(t, srv)
+	defer m1.Close()
+	m2 := dial(t, srv)
+	defer m2.Close()
+
+	send(host, updateMsgWithTarget("rg", "pw1", "hostA", 10))
+	waitFor(t, host, "update_ack", 2*time.Second)
+	send(m1, map[string]any{"type": "join", "room": "rg", "password": "pw1", "tempUser": "memB"})
+	waitFor(t, m1, "joined", 2*time.Second)
+	send(m2, map[string]any{"type": "join", "room": "rg", "password": "pw1", "tempUser": "memC"})
+	waitFor(t, m2, "joined", 2*time.Second)
+
+	// Non-host transfer attempt.
+	send(m1, map[string]any{"type": "transfer", "room": "rg", "tempUser": "memB", "to": "memC"})
+	waitForErr(t, m1, "host_only", 2*time.Second)
+
+	// Unknown target.
+	send(host, map[string]any{"type": "transfer", "room": "rg", "tempUser": "hostA", "to": "ghost"})
+	waitForErr(t, host, "member_not_found", 2*time.Second)
+
+	// Self-transfer.
+	send(host, map[string]any{"type": "transfer", "room": "rg", "tempUser": "hostA", "to": "hostA"})
+	waitForErr(t, host, "already_host", 2*time.Second)
+
+	// 'peer' is ambiguous with 3 members.
+	send(host, map[string]any{"type": "transfer", "room": "rg", "tempUser": "hostA", "to": "peer"})
+	waitForErr(t, host, "peer_ambiguous", 2*time.Second)
+
+	// Explicit transfer to a real member still works in a 3-person room.
+	send(host, map[string]any{"type": "transfer", "room": "rg", "tempUser": "hostA", "to": "memC"})
+	waitFor(t, m2, "host_changed", 2*time.Second)
+	snap := waitFor(t, m2, "room", 2*time.Second)
+	if snap["room"].(map[string]any)["isHost"] != true {
+		t.Fatalf("explicit transfer in multi-member room must work")
+	}
+}
+
+// F13: the host's denial reaches the requester; the host role stays put.
+func TestTransferDeny(t *testing.T) {
+	srv := startTestServer(t)
+	defer srv.Close()
+
+	host := dial(t, srv)
+	defer host.Close()
+	member := dial(t, srv)
+	defer member.Close()
+
+	send(host, updateMsgWithTarget("rd", "pw1", "hostA", 10))
+	waitFor(t, host, "update_ack", 2*time.Second)
+	send(member, map[string]any{"type": "join", "room": "rd", "password": "pw1", "tempUser": "memB"})
+	waitFor(t, member, "joined", 2*time.Second)
+	waitFor(t, host, "peer_joined", 2*time.Second)
+
+	send(member, map[string]any{"type": "transfer_request", "room": "rd", "tempUser": "memB"})
+	waitFor(t, member, "transfer_requested", 2*time.Second)
+	waitFor(t, host, "transfer_request", 2*time.Second)
+
+	send(host, map[string]any{"type": "transfer_deny", "room": "rd", "tempUser": "hostA", "to": "memB"})
+	waitFor(t, member, "transfer_deny", 2*time.Second)
+
+	// Deny does not change the host: member update is still member-side.
+	send(member, updateMsg("rd", "pw1", "memB", 20))
+	waitForErr(t, member, "other_host_syncing", 2*time.Second)
 }

@@ -92,6 +92,9 @@ type Room struct {
 	// through the member_update path — lets setLoading broadcast a barrier
 	// flip (e.g. loading TTL expiry) even when no member flag changed.
 	lastMemberUpdateBarrier bool
+	// transferReqAt rate-limits transfer_request per sender so a member
+	// cannot spam the host with approval dialogs.
+	transferReqAt map[string]time.Time
 }
 
 func (r *Room) setHostLocked(id string) { r.HostId = id }
@@ -406,6 +409,7 @@ func (rs *RoomStore) GetOrCreate(name, password, hostId string) *Room {
 			members:     make(map[string]*Member),
 			seen:        map[string]bool{hostId: true},
 			loadingWait: rs.loadingWait,
+			transferReqAt: make(map[string]time.Time),
 		}
 		room.Playback.LastUpdateServerTime = now()
 		rs.rooms[name] = room

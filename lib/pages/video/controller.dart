@@ -96,6 +96,8 @@ class VideoDetailController extends GetxController
     with GetTickerProviderStateMixin, BlockMixin {
   /// 路由传参
   late final Map args;
+  // True when this page was opened by a Watch-Together follow-navigate.
+  bool isWtFollow = false;
   late String bvid;
   late int aid;
   late final RxInt cid;
@@ -447,6 +449,15 @@ class VideoDetailController extends GetxController
   void onInit() {
     super.onInit();
     args = Get.arguments;
+    // Watch-Together followed navigation: Pref.autoPlayEnable defaults to
+    // false, and without a forced autoplay the mpv engine is never
+    // created — the member page sits on a phantom "playing" status that
+    // sync logic cannot fix. wtFollow also suppresses history-resume so
+    // the authoritative `progress` argument is not overridden.
+    isWtFollow = args['wtFollow'] == true;
+    if (isWtFollow) {
+      _autoPlay.value = true;
+    }
 
     // 开启新视频时，如果存在前代播放器的应用内小窗，则按播放上下文决定是否重置旧状态
     // 避免不同视频/分P之间 SponsorBlock 片段状态污染，同时保留同上下文无缝恢复能力
@@ -1564,7 +1575,7 @@ class VideoDetailController extends GetxController
           _canUseLastPlayTime(response.lastPlayCid)) {
         if (Accounts.get(AccountType.video).mid !=
             Accounts.get(AccountType.heartbeat).mid) {
-          if (plPlayerController.position.value <= 3) {
+          if (plPlayerController.position.value <= 3 && !isWtFollow) {
             plPlayerController.seekTo(
               Duration(milliseconds: response.lastPlayTime!),
             );

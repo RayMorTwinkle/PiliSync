@@ -21,11 +21,18 @@ class PlPlayerAdapter implements WtPlayerAdapter, WtPlaybackCommandSource {
   @override
   bool get hasPlayer => _p != null;
 
+  // A PlPlayerController exists as soon as the page builds — but the mpv
+  // engine may never be created (autoplay off). playerStatus defaults to
+  // .playing and isBuffering to true: without the engine gate a member's
+  // phantom "playing+buffering" state makes calibrate never issue play
+  // AND holds the room loading barrier forever.
   @override
-  bool get isPlaying => _p?.playerStatus.isPlaying ?? false;
+  bool get isPlaying =>
+      _p?.videoPlayerController != null && _p!.playerStatus.isPlaying;
 
   @override
-  bool get isBuffering => _p?.isBuffering.value ?? false;
+  bool get isBuffering =>
+      _p?.videoPlayerController != null && _p!.isBuffering.value;
 
   @override
   // 毫秒精度：整秒 position 与外推小数目标叠加会把 <1s 的稳态偏差

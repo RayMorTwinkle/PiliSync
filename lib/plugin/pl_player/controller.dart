@@ -1489,7 +1489,11 @@ class PlPlayerController with BlockConfigMixin {
   Future<void> _rawPlay() async {
     await _videoPlayerController?.play();
     audioSessionHandler?.setActive(true);
-    playerStatus.value = PlayerStatus.playing;
+    // With no engine (autoplay off, WT member pre-init) claiming .playing
+    // poisons every status reader — calibrate would never retry play.
+    if (_videoPlayerController != null) {
+      playerStatus.value = PlayerStatus.playing;
+    }
   }
 
   /// 播放视频
@@ -1521,7 +1525,10 @@ class PlPlayerController with BlockConfigMixin {
     bool isInterrupt = false,
     bool isSync = false,
   }) async {
-    if (!isSync) {
+    // notify=false (setDataSource's internal pause on source switch) must
+    // not leak a "user pause" request — it falsely arms the WT member's
+    // auto-play cooldown after every room-driven navigation.
+    if (notify && !isSync) {
       _playbackRequests.add((playing: false, isInterrupt: isInterrupt));
     }
     await _videoPlayerController?.pause();
