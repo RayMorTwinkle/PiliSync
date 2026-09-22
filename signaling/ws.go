@@ -1030,6 +1030,7 @@ func setupMux(rooms *RoomStore, hub *Hub) *http.ServeMux {
 	mux.HandleFunc("/dl/", serveDownload)
 	mux.HandleFunc("/telemetry/ping", serveTelemetryPing)
 	mux.HandleFunc("/telemetry/dashboard", serveTelemetryDashboard)
+	mux.HandleFunc("/", serveIndex)
 	return mux
 }
 
