@@ -1025,6 +1025,11 @@ func setupMux(rooms *RoomStore, hub *Hub) *http.ServeMux {
 	mux.HandleFunc("/timestamp", serveTimestamp)
 	mux.HandleFunc("/ice-servers", serveICEServers)
 	mux.HandleFunc("/stats", func(w http.ResponseWriter, r *http.Request) { serveStats(rooms, hub, w, r) })
+	mux.HandleFunc("/update/latest", serveUpdateLatest)
+	mux.HandleFunc("/update/publish", servePublish)
+	mux.HandleFunc("/dl/", serveDownload)
+	mux.HandleFunc("/telemetry/ping", serveTelemetryPing)
+	mux.HandleFunc("/telemetry/dashboard", serveTelemetryDashboard)
 	return mux
 }
 

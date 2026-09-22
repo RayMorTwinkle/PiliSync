@@ -14,6 +14,7 @@ import 'package:PiliPlus/pages/home/controller.dart';
 import 'package:PiliPlus/pages/mine/controller.dart';
 import 'package:PiliPlus/pages/mine/view.dart';
 import 'package:PiliPlus/services/account_service.dart';
+import 'package:PiliPlus/services/telemetry/telemetry_service.dart';
 import 'package:PiliPlus/utils/extension/get_ext.dart';
 import 'package:PiliPlus/utils/extension/iterable_ext.dart';
 import 'package:PiliPlus/utils/feed_back.dart';
@@ -79,6 +80,7 @@ class MainController extends GetxController
     if (Pref.autoUpdate) {
       Update.checkUpdate();
     }
+    Telemetry.init();
 
     setNavBarConfig();
 

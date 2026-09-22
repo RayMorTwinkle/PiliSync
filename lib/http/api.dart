@@ -424,6 +424,13 @@ abstract final class Api {
   static const String latestApp =
       'https://api.github.com/repos/RayMorTwinkle/PiliSync/releases';
 
+  /// 国内渠道：PiliSync 信令服务器返回 GitHub 兼容的 release JSON
+  /// （版本号/changelog/下载直链由 /update/publish 写入 data/latest.json）。
+  static const String latestAppDomestic =
+      'https://wt.raymor.top/update/latest';
+
+  static const String telemetryPing = 'https://wt.raymor.top/telemetry/ping';
+
   // 多少人在看
   // https://api.bilibili.com/x/player/online/total?aid=913663681&cid=1203559746&bvid=BV1MM4y1s7NZ&ts=56427838
   static const String onlineTotal = '/x/player/online/total';

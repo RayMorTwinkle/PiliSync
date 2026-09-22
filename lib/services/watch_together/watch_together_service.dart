@@ -3,6 +3,7 @@ import 'dart:math';
 
 import 'package:flutter/foundation.dart';
 
+import 'package:PiliPlus/services/telemetry/telemetry_service.dart';
 import 'package:PiliPlus/services/watch_together/wt_call_manager.dart';
 import 'package:PiliPlus/services/watch_together/wt_debug_server.dart';
 import 'package:PiliPlus/services/watch_together/wt_models.dart';
@@ -265,6 +266,7 @@ class WatchTogetherService {
     // authoritative and corrects this in _handleEvent.
     role.value = newRole;
     inRoom.value = true;
+    Telemetry.wtSessionStart();
     client.join();
     _startLoop();
     call.attach(client);
@@ -1070,6 +1072,7 @@ class WatchTogetherService {
     client.timeSync.reset();
     role.value = WtRole.none;
     inRoom.value = false;
+    Telemetry.wtSessionEnd();
     room.value = null;
     connState.value = WtConnectionState.disconnected;
     _currentTarget = null;

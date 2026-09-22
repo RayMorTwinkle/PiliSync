@@ -327,7 +327,13 @@ abstract final class SettingBoxKey {
       wtVoiceGate = 'wtVoiceGate',
       wtRemoteVolume = 'wtRemoteVolume',
       wtFloatingPanel = 'wtFloatingPanel',
-      wtWelcomed = 'wtWelcomed';
+      wtWelcomed = 'wtWelcomed',
+      updateChannel = 'updateChannel',
+      telemetryEnabled = 'telemetryEnabled',
+      telemetryDeviceId = 'telemetryDeviceId',
+      telemetryOpenCount = 'telemetryOpenCount',
+      wtSessionCount = 'wtSessionCount',
+      wtSessionSecs = 'wtSessionSecs';
 }
 
 abstract final class LocalCacheKey {

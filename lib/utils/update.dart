@@ -6,6 +6,7 @@ import 'package:PiliPlus/common/constants.dart';
 import 'package:PiliPlus/http/api.dart';
 import 'package:PiliPlus/http/browser_ua.dart';
 import 'package:PiliPlus/http/init.dart';
+import 'package:PiliPlus/models/common/update_channel.dart';
 import 'package:PiliPlus/utils/accounts/account.dart';
 import 'package:PiliPlus/utils/page_utils.dart';
 import 'package:PiliPlus/utils/storage.dart';
@@ -22,43 +23,58 @@ abstract final class Update {
   static Future<void> checkUpdate([bool isAuto = true]) async {
     if (kDebugMode) return;
     SmartDialog.dismiss();
+    final bool domestic =
+        Pref.updateChannel == UpdateChannel.domestic.index;
     try {
       final res = await Request().get(
-        Api.latestApp,
+        domestic ? Api.latestAppDomestic : Api.latestApp,
         options: Options(
           headers: {'user-agent': BrowserUa.mob},
           extra: {'account': const NoAccount()},
         ),
       );
-      if (res.data is Map || res.data.isEmpty) {
-        if (!isAuto) {
-          SmartDialog.showToast('检查更新失败，GitHub接口未返回数据，请检查网络');
+      final Map<String, dynamic>? data;
+      if (domestic) {
+        // 国内渠道返回单个 release 对象（GitHub 兼容 schema）
+        final d = res.data;
+        data = (d is Map && d['tag_name'] != null)
+            ? Map<String, dynamic>.from(d)
+            : null;
+      } else {
+        if (res.data is Map || res.data.isEmpty) {
+          if (!isAuto) {
+            SmartDialog.showToast('检查更新失败，GitHub接口未返回数据，请检查网络');
+          }
+          return;
         }
-        return;
+        final bool includePreRelease = Pref.preReleaseUpdate;
+        data = (res.data as List).firstWhere(
+          (e) => includePreRelease || e['prerelease'] != true,
+          orElse: () => null,
+        )?.cast<String, dynamic>();
       }
-      final bool includePreRelease = Pref.preReleaseUpdate;
-      final data = (res.data as List).firstWhere(
-        (e) => includePreRelease || e['prerelease'] != true,
-        orElse: () => null,
-      );
       if (data == null) {
         if (!isAuto) {
           SmartDialog.showToast('已是最新版本');
         }
         return;
       }
+      final release = data;
       final int latest =
-          DateTime.parse(data['created_at']).millisecondsSinceEpoch ~/ 1000;
+          DateTime.parse(release['created_at']).millisecondsSinceEpoch ~/
+          1000;
       if (BuildConfig.buildTime >= latest) {
         if (!isAuto) {
           SmartDialog.showToast('已是最新版本');
         }
-      } else if (isAuto && Pref.skipVersion == data['tag_name']) {
+      } else if (isAuto && Pref.skipVersion == release['tag_name']) {
         // 用户已选择跳过此版本，静默忽略
       } else {
         Map<String, dynamic>? bestAsset;
-        if (Platform.isAndroid) {
-          bestAsset = await _findBestAsset(data);
+        if (domestic) {
+          bestAsset = _findDomesticAsset(release);
+        } else if (Platform.isAndroid) {
+          bestAsset = await _findBestAsset(release);
         }
         SmartDialog.show(
           animationType: SmartAnimationType.centerFade_otherSlide,
@@ -66,7 +82,7 @@ abstract final class Update {
             final colorScheme = ColorScheme.of(context);
             Widget downloadBtn(String text, {String? ext, String? url}) =>
                 TextButton(
-                  onPressed: () => onDownload(data, ext: ext, url: url),
+                  onPressed: () => onDownload(release, ext: ext, url: url),
                   child: Text(text),
                 );
             return AlertDialog(
@@ -78,11 +94,11 @@ abstract final class Update {
                     crossAxisAlignment: CrossAxisAlignment.start,
                     children: [
                       Text(
-                        '${data['tag_name']}',
+                        '${release['tag_name']}',
                         style: const TextStyle(fontSize: 20),
                       ),
                       const SizedBox(height: 8),
-                      Text('${data['body']}'),
+                      Text('${release['body']}'),
                       TextButton(
                         onPressed: () => PageUtils.launchURL(
                           '${Constants.sourceCodeUrl}/commits/main',
@@ -103,7 +119,7 @@ abstract final class Update {
                       SmartDialog.dismiss();
                       GStorage.setting.put(
                         SettingBoxKey.skipVersion,
-                        data['tag_name'],
+                        release['tag_name'],
                       );
                     },
                     child: Text(
@@ -118,7 +134,15 @@ abstract final class Update {
                     style: TextStyle(color: colorScheme.outline), 
                   ),
                 ),
-                if (Platform.isWindows) ...[
+                if (domestic) ...[
+                  if (bestAsset != null)
+                    downloadBtn(
+                      '下载 ${bestAsset['name']}',
+                      url: bestAsset['browser_download_url'],
+                    )
+                  else
+                    downloadBtn('Github'),
+                ] else if (Platform.isWindows) ...[
                   downloadBtn('zip', ext: 'zip'),
                   downloadBtn('exe', ext: 'exe'),
                 ] else if (Platform.isLinux) ...[
@@ -179,6 +203,26 @@ abstract final class Update {
       if (kDebugMode) debugPrint('download error: $e');
       PageUtils.launchURL('${Constants.sourceCodeUrl}/releases/latest');
     }
+  }
+
+  /// 国内渠道资产按平台扩展名匹配（文件名是固定的 pilisync-latest.*，
+  /// 不含 ABI/平台段）。
+  static Map<String, dynamic>? _findDomesticAsset(Map data) {
+    const exts = {
+      'android': '.apk',
+      'macos': '.dmg',
+      'windows': '.zip',
+      'linux': '.tar.gz',
+    };
+    final ext = exts[Platform.operatingSystem];
+    if (ext == null) return null;
+    final List assets = data['assets'] ?? [];
+    for (final a in assets) {
+      if ((a['name'] as String? ?? '').endsWith(ext)) {
+        return Map<String, dynamic>.from(a as Map);
+      }
+    }
+    return null;
   }
 
   static Future<Map<String, dynamic>?> _findBestAsset(Map data) async {

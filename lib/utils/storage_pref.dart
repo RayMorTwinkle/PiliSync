@@ -746,6 +746,13 @@ abstract final class Pref {
   static String get skipVersion =>
       _setting.get(SettingBoxKey.skipVersion, defaultValue: '');
 
+  /// 0 = GitHub, 1 = 国内渠道（默认，GitHub API 在国内不稳定）
+  static int get updateChannel =>
+      _setting.get(SettingBoxKey.updateChannel, defaultValue: 1);
+
+  static bool get telemetryEnabled =>
+      _setting.get(SettingBoxKey.telemetryEnabled, defaultValue: true);
+
   static bool get horizontalPreview =>
       _setting.get(SettingBoxKey.horizontalPreview, defaultValue: false);
 

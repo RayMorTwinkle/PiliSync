@@ -19,6 +19,7 @@ import 'package:PiliPlus/models/common/member/tab_type.dart';
 import 'package:PiliPlus/models/common/reply/reply_sort_type.dart';
 import 'package:PiliPlus/models/common/sponsor_block/skip_type.dart';
 import 'package:PiliPlus/models/common/super_resolution_type.dart';
+import 'package:PiliPlus/models/common/update_channel.dart';
 import 'package:PiliPlus/models/dynamics/result.dart'
     show DynamicsDataModel, ItemModulesModel;
 import 'package:PiliPlus/pages/common/slide/common_slide_page.dart';
@@ -669,12 +670,28 @@ List<SettingsModel> get extraSettings => [
       }
     },
   ),
+  PopupModel<UpdateChannel>(
+    title: '更新渠道',
+    leading: const Icon(Icons.cloud_download_outlined),
+    value: () => UpdateChannel.values[Pref.updateChannel],
+    items: UpdateChannel.values,
+    onSelected: (value, setState) => GStorage.setting
+        .put(SettingBoxKey.updateChannel, value.index)
+        .whenComplete(setState),
+  ),
   const SwitchModel(
     title: '检测预发布版本更新',
-    subtitle: '检查更新时同时包含 pre-release 版本',
+    subtitle: '检查更新时同时包含 pre-release 版本（仅 GitHub 渠道生效）',
     leading: Icon(Icons.preview_outlined),
     setKey: SettingBoxKey.preReleaseUpdate,
     defaultVal: false,
+  ),
+  const SwitchModel(
+    title: '遥测',
+    subtitle: '',
+    leading: Icon(Icons.query_stats),
+    setKey: SettingBoxKey.telemetryEnabled,
+    defaultVal: true,
   ),
 ];
 
