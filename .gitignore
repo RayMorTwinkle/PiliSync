@@ -159,8 +159,6 @@ docs/*
 !docs/spec/**
 test*.dart
 
-AGENTS.md
-
 CLAUDE.md
 
 CONTEXT.md
