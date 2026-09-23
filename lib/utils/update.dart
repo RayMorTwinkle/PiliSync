@@ -221,7 +221,7 @@ abstract final class Update {
     const exts = {
       'android': '.apk',
       'macos': '.dmg',
-      'windows': '.zip',
+      'windows': '.exe',
       'linux': '.tar.gz',
     };
     final ext = exts[Platform.operatingSystem];

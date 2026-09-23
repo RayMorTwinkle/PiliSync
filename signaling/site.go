@@ -30,7 +30,7 @@ func serveIndex(w http.ResponseWriter, r *http.Request) {
 		http.NotFound(w, r)
 		return
 	}
-	tag, body, apk, dmg := "", "", "", ""
+	tag, body, apk, dmg, win := "", "", "", "", ""
 	if raw, err := os.ReadFile(latestFilePath); err == nil {
 		var lf latestFile
 		if json.Unmarshal(raw, &lf) == nil {
@@ -42,6 +42,8 @@ func serveIndex(w http.ResponseWriter, r *http.Request) {
 					apk = a.BrowserDownloadURL
 				case strings.HasSuffix(a.Name, ".dmg"):
 					dmg = a.BrowserDownloadURL
+				case strings.HasSuffix(a.Name, ".exe"):
+					win = a.BrowserDownloadURL
 				}
 			}
 		}
@@ -52,6 +54,9 @@ func serveIndex(w http.ResponseWriter, r *http.Request) {
 	if dmg == "" {
 		dmg = siteReleasesFallback
 	}
+	if win == "" {
+		win = siteReleasesFallback
+	}
 	verBadge := "获取最新版"
 	if tag != "" {
 		verBadge = tag
@@ -61,7 +66,7 @@ func serveIndex(w http.ResponseWriter, r *http.Request) {
 	b.WriteString(`<!doctype html><html lang="zh-CN"><head><meta charset="utf-8">
 <meta name="viewport" content="width=device-width,initial-scale=1">
 <title>PiliSync — 和朋友一起看 B 站</title>
-<meta name="description" content="PiliSync：B 站第三方客户端 PiliPlus 的增强 fork，新增「一起看」——同步进度观影、双人语音通话、房主转让、国内渠道更新。">
+<meta name="description" content="PiliSync：B 站第三方客户端 PiliPlus 的增强 fork，新增「一起看」——同步进度观影、双人语音通话、房主转让、国内渠道更新。支持 Android / macOS / Windows。">
 <link rel="icon" type="image/png" href="/icon.png">
 <style>
 :root{--pink:#fb7299;--green:#43a85f;--ink:#1d1d1f;--sub:#6e6e73;--line:#e8e8ed;
@@ -165,11 +170,12 @@ nav{background:rgba(0,0,0,.7)}
 <div class="hero"><div class="orb orb1"></div><div class="orb orb2"></div><div class="orb orb3"></div>
 <img class="icon" src="/icon.png" alt="PiliSync">
 <h1>PiliSync</h1>
-<p class="tag">B 站第三方客户端，和朋友「一起看」<br>同步进度观影 · 双人语音通话 · 跨 Android / macOS</p>
+<p class="tag">B 站第三方客户端，和朋友「一起看」<br>同步进度观影 · 双人语音通话 · 跨 Android / macOS / Windows</p>
 <span class="ver">◆ ` + html.EscapeString(verBadge) + `</span>
 <div class="dl">
 <a class="btn btn-p" href="` + html.EscapeString(apk) + `">⬇ 下载 Android</a>
 <a class="btn btn-s" href="` + html.EscapeString(dmg) + `">⬇ 下载 macOS</a>
+<a class="btn btn-s" href="` + html.EscapeString(win) + `">⬇ 下载 Windows</a>
 </div>
 <a class="gh" href="https://github.com/RayMorTwinkle/PiliSync/releases" rel="noopener">GitHub Releases · 历史版本 →</a>
 </div>

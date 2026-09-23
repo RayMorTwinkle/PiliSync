@@ -62,7 +62,7 @@ type latestAsset struct {
 var panPathByPlatform = map[string]string{
 	"android": "/apps/pilisync/pilisync-latest.apk",
 	"macos":   "/apps/pilisync/pilisync-latest.dmg",
-	"windows": "/apps/pilisync/pilisync-latest.zip",
+	"windows": "/apps/pilisync/pilisync-latest.exe",
 	"linux":   "/apps/pilisync/pilisync-latest.tar.gz",
 }
 

@@ -179,6 +179,7 @@ jobs:
     if: ${{ (github.event_name == 'pull_request' && github.repository == 'RayMorTwinkle/PiliSync') || github.event.inputs.build_win_x64 == 'true' }}
     uses: ./.github/workflows/win_x64.yml
     permissions: write-all
+    secrets: inherit
     with:
       tag: ${{ github.event_name == 'workflow_dispatch' && github.event.inputs.tag || '' }}
 
