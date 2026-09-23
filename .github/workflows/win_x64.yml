@@ -80,7 +80,11 @@ jobs:
         shell: bash
         run: |
           set -e
-          BODY=$(gh release view "${{ github.event.inputs.tag }}" --repo "${{ github.repository }}" --json body -q .body 2>/dev/null || echo "")
+          # Windows runner 上 gh CLI 输出会按系统 codepage 转码（中文变 ?），
+          # 改用 curl+jq 直读 API，UTF-8 字节透传。
+          BODY=$(curl -fsSL -H "Authorization: Bearer ${GH_TOKEN}" \
+            "https://api.github.com/repos/${{ github.repository }}/releases/tags/${{ github.event.inputs.tag }}" \
+            | jq -r '.body // ""')
           # 直连源站绕开 Cloudflare：CF 免费版 100s 超时，上传+服务端网盘转存会 524。
           # IP 是 SM 源站（ServerX DEVICES/README.md），变更时同步更新。
           curl -fsSL -X POST --resolve "wt.raymor.top:8443:122.51.139.252" \
