@@ -152,6 +152,7 @@ dist
 test.dart
 
 docs/*
+!docs/av-sync-playbook.md
 !docs/danmaku_font_scaling.md
 !docs/inapp_pip_implementation.md
 !docs/local-dev-notes.md
