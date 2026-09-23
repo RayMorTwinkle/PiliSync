@@ -134,21 +134,28 @@ abstract final class Update {
                     style: TextStyle(color: colorScheme.outline), 
                   ),
                 ),
+                // 国内渠道优先：命中平台资产给 /dl/ 直链，否则落官网下载页；
+                // GitHub 只作备选入口（对应 tag 的 release 页）。
                 if (domestic) ...[
-                  if (bestAsset != null)
-                    downloadBtn(
-                      '下载 ${bestAsset['name']}',
-                      url: bestAsset['browser_download_url'],
-                    )
-                  else
-                    downloadBtn('Github'),
+                  downloadBtn(
+                    '国内下载',
+                    url: bestAsset?['browser_download_url'] as String? ??
+                        Api.wtSite,
+                  ),
+                  downloadBtn(
+                    'GitHub',
+                    url:
+                        '${Constants.sourceCodeUrl}/releases/tag/${release['tag_name']}',
+                  ),
                 ] else if (Platform.isWindows) ...[
                   downloadBtn('zip', ext: 'zip'),
                   downloadBtn('exe', ext: 'exe'),
+                  downloadBtn('国内下载', url: Api.wtSite),
                 ] else if (Platform.isLinux) ...[
                   downloadBtn('rpm', ext: 'rpm'),
                   downloadBtn('deb', ext: 'deb'),
                   downloadBtn('targz', ext: 'tar.gz'),
+                  downloadBtn('国内下载', url: Api.wtSite),
                 ] else if (Platform.isAndroid) ...[
                   if (bestAsset != null)
                     downloadBtn(
@@ -157,8 +164,11 @@ abstract final class Update {
                     )
                   else
                     downloadBtn('Github'),
-                ] else
+                  downloadBtn('国内下载', url: Api.wtSite),
+                ] else ...[
                   downloadBtn('Github'),
+                  downloadBtn('国内下载', url: Api.wtSite),
+                ],
               ],
             );
           },

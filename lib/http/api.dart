@@ -429,6 +429,9 @@ abstract final class Api {
   static const String latestAppDomestic =
       'https://wt.raymor.top/update/latest';
 
+  /// 国内渠道官网落地页：永远指向最新 /dl/ 直链，做下载按钮的兜底入口。
+  static const String wtSite = 'https://wt.raymor.top/';
+
   static const String telemetryPing = 'https://wt.raymor.top/telemetry/ping';
 
   // 多少人在看
