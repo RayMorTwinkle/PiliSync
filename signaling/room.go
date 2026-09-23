@@ -92,6 +92,11 @@ type Room struct {
 	// through the member_update path — lets setLoading broadcast a barrier
 	// flip (e.g. loading TTL expiry) even when no member flag changed.
 	lastMemberUpdateBarrier bool
+	// hostGoneAt marks when the host's last connection was reaped. The
+	// handover to the earliest member is deferred by hostHandoverGrace so a
+	// brief network blip doesn't permanently swap roles — a host that
+	// rejoins inside the window keeps the role. Zero = host online.
+	hostGoneAt time.Time
 	// transferReqAt rate-limits transfer_request per sender so a member
 	// cannot spam the host with approval dialogs.
 	transferReqAt map[string]time.Time
@@ -175,9 +180,13 @@ func (r *Room) updatePlaybackLocked(pb PlaybackState) {
 // setTargetLocked switches to a new video; position resets to the start so
 // a snapshot taken between navigate and the next update is self-consistent.
 // Paused=true: a member joining/reconnecting in that window must wait at
-// the start rather than be seeked to 0 while "playing".
+// the start rather than be seeked to 0 while "playing". Url/VideoTitle are
+// cleared too — otherwise a navigate(nil) (host left the page) leaves the
+// old video metadata in every snapshot until the next update lands.
 func (r *Room) setTargetLocked(t *Target) {
 	r.Playback.Target = t
+	r.Playback.Url = ""
+	r.Playback.VideoTitle = ""
 	r.Playback.CurrentTime = 0
 	r.Playback.Paused = true
 	r.Playback.LastUpdateClientTime = now()
@@ -331,6 +340,15 @@ var (
 	// tighter than the conn-reap timeout so a zombie conn cannot stall
 	// the room for pongWait-scale durations.
 	memberHeartbeatTTL = 15 * time.Second
+	// hostHandoverGrace defers the disconnect→handover so a brief host
+	// network blip does not permanently swap roles (the returning host
+	// would be demoted to member by other_host_syncing). A real quit
+	// lands the handover within ~grace+handoverCheck seconds.
+	hostHandoverGrace = 20 * time.Second
+	// handoverCheck is how often the store sweeps for due handovers —
+	// much faster than cleanupInterval so a real host quit does not sit
+	// leaderless for a whole expiry sweep.
+	handoverCheck = 5 * time.Second
 )
 
 type RoomStore struct {
@@ -343,6 +361,9 @@ type RoomStore struct {
 	loadingWait time.Duration
 	// called when a room expires; the store lock is NOT held during the call
 	onExpire func(room *Room)
+	// called when the handover grace elapses and the earliest member is
+	// promoted — the hub uses it to broadcast host_changed + snapshots.
+	onHandover func(room *Room, from, to string)
 }
 
 func NewRoomStore(onExpire func(room *Room)) *RoomStore {
@@ -358,7 +379,59 @@ func newRoomStore(onExpire func(room *Room), expire, interval, loadingWait time.
 		onExpire:    onExpire,
 	}
 	go rs.cleanupLoop()
+	go rs.handoverLoop()
 	return rs
+}
+
+// handoverLoop promotes the earliest member once a departed host stays
+// gone past hostHandoverGrace. A host whose member record reappears
+// (rejoined on a fresh conn) clears the pending handover instead.
+func (rs *RoomStore) handoverLoop() {
+	t := time.NewTicker(handoverCheck)
+	for range t.C {
+		rs.sweepHandovers()
+	}
+}
+
+func (rs *RoomStore) sweepHandovers() {
+	type handover struct {
+		room     *Room
+		from, to string
+	}
+	var due []handover
+	rs.mu.Lock()
+	for _, room := range rs.rooms {
+		room.mu.Lock()
+		if room.hostGoneAt.IsZero() {
+			room.mu.Unlock()
+			continue
+		}
+		if _, back := room.members[room.HostId]; back {
+			room.hostGoneAt = time.Time{}
+			room.mu.Unlock()
+			continue
+		}
+		if time.Since(room.hostGoneAt) >= hostHandoverGrace {
+			from := room.HostId
+			if to := room.transferHostLocked(); to != "" {
+				due = append(due, handover{room, from, to})
+			}
+			// No members to promote: keep hostGoneAt so a later joiner
+			// is promoted promptly; the departed host keeps HostId so
+			// its own rejoin still resumes the role.
+			if len(room.members) > 0 {
+				room.hostGoneAt = time.Time{}
+			}
+		}
+		room.mu.Unlock()
+	}
+	rs.mu.Unlock()
+	for _, h := range due {
+		log.Printf("[host] handover room=%s %s -> %s (grace elapsed)", h.room.Name, h.from, h.to)
+		if rs.onHandover != nil {
+			rs.onHandover(h.room, h.from, h.to)
+		}
+	}
 }
 
 func (rs *RoomStore) cleanupLoop() {

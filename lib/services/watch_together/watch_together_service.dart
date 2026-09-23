@@ -117,8 +117,20 @@ class WatchTogetherService {
   bool _navigatePending = false;
   double _lastNavigateAt = -double.infinity;
   int _navigateRetries = 0;
+  // Once retries are exhausted for a room target the member stays put on
+  // purpose (the user keeps backing out) — snapshot drift must not re-arm
+  // the same navigation. Re-arms when the room target actually changes.
+  WtTarget? _navigateGiveUpTarget;
   static const _navigateRetryIntervalSeconds = 10.0;
   static const _navigateMaxRetries = 5;
+
+  /// Test seam: intercepts the actual GetX navigation so tests can drive
+  /// _followNavigate/_executeNavigate without a widget tree.
+  @visibleForTesting
+  void Function(WtTarget target, int? progressMs)? navigateHook;
+
+  @visibleForTesting
+  WtTarget? get currentTargetForTesting => _currentTarget;
   final _memberCoordinator = WtMemberCoordinator();
   final RxBool debugOverlay = false.obs;
 
@@ -524,24 +536,35 @@ class WatchTogetherService {
     }
     final snap = room.value;
     if (snap == null) return;
-    if (!player.hasPlayer) {
-      dbg('MTICK skip: no player (route=${Get.currentRoute})');
-      return;
-    }
-    if (player.isLive) {
-      dbg('MTICK skip: live');
-      return;
-    }
     final now = clock?.call() ?? client.timeSync.now();
 
     final localTarget = _detectTarget();
     final roomTarget = snap.playback.target;
 
+    // Route recovery runs before the player checks — a half-disposed
+    // player must not stall navigation away from a stale page.
+
     // The room has no target anymore (the host's null-navigate frame was
-    // missed — e.g. it raced a reconnect) but the member is still sitting
-    // on the video page: leave it.
-    if (roomTarget == null && _currentTarget != null && localTarget != null) {
+    // missed — e.g. it raced a reconnect) but the member still believes it
+    // is on a watch page: leave it. localTarget is intentionally NOT
+    // required: _exitVideoTarget checks the route itself and stays armed
+    // until the watch route is actually gone.
+    if (roomTarget == null && _currentTarget != null) {
       _exitVideoTarget();
+      return;
+    }
+
+    // The navigate broadcast is fire-and-forget — a member whose socket
+    // was dead when it went out misses it forever and stays on the old
+    // video. The snapshot's target is authoritative: drift between it and
+    // our followed target re-arms a navigate (unless we already gave up
+    // on this exact target — do not fight the user's manual exit).
+    if (roomTarget != null &&
+        _isDifferentTarget(roomTarget, _currentTarget) &&
+        (_navigateGiveUpTarget == null ||
+            _isDifferentTarget(roomTarget, _navigateGiveUpTarget))) {
+      dbg('NAV drift: refollow room target');
+      _followNavigate(roomTarget);
       return;
     }
 
@@ -565,13 +588,23 @@ class WatchTogetherService {
             progressMs: _navProgressMs(_currentTarget!),
           );
         } else {
-          // Give up until the next navigate event — do not fight a user
-          // who keeps backing out of the target page.
+          // Give up until the room target actually changes — do not fight
+          // a user who keeps backing out of the target page.
+          _navigateGiveUpTarget = _currentTarget;
           _navigatePending = false;
           _navigateRetries = 0;
           dbg('NAV gave up after $_navigateMaxRetries retries');
         }
       }
+    }
+
+    if (!player.hasPlayer) {
+      dbg('MTICK skip: no player (route=${Get.currentRoute})');
+      return;
+    }
+    if (player.isLive) {
+      dbg('MTICK skip: live');
+      return;
     }
 
     // A member on a DIFFERENT video page must not be calibrated against
@@ -709,10 +742,14 @@ class WatchTogetherService {
         if (event.waitForLoadding != null) {
           _applyWaitUpdate(event.waitForLoadding!);
         }
-        if (event.target == null) {
-          _exitVideoTarget();
-        } else if (_followNavigate(event.target!)) {
-          SmartDialog.showToast('正在跟随房主切换视频');
+        // Only members follow — a stale navigate landing on a promoted
+        // host must not steer its page.
+        if (role.value.isMember) {
+          if (event.target == null) {
+            _exitVideoTarget();
+          } else if (_followNavigate(event.target!)) {
+            SmartDialog.showToast('正在跟随房主切换视频');
+          }
         }
       case WtPeerEvent():
         final snap = room.value;
@@ -866,14 +903,20 @@ class WatchTogetherService {
   }
 
   /// The host left the video page: drop the stale target and pop the
-  /// member's video route if it is still sitting on it.
+  /// member's video route if it is still sitting on it. An overlay/sheet
+  /// on top of the video page may not register its own route name — a
+  /// single back() can leave the video still mounted, so _currentTarget
+  /// stays armed until the route provably left the watch pages and the
+  /// member tick keeps popping.
   void _exitVideoTarget() {
-    _currentTarget = null;
     _navigatePending = false;
     _navigateRetries = 0;
+    _navigateGiveUpTarget = null;
     final route = Get.currentRoute;
     if (route == '/videoV' || route == '/liveRoom') {
       Get.back();
+    } else {
+      _currentTarget = null;
     }
   }
 
@@ -881,6 +924,7 @@ class WatchTogetherService {
   /// the member is already on — reconnects must not rebuild the player.
   bool _followNavigate(WtTarget target) {
     _currentTarget = target;
+    _navigateGiveUpTarget = null;
     // A room-driven navigation starts a fresh sync context: a pause
     // cooldown armed on the previous page (manual pause, audio
     // interrupt, or a leaked setDataSource pause) must not carry over
@@ -957,6 +1001,11 @@ class WatchTogetherService {
     // page dies half-loaded (title/uploader from arguments survive,
     // comments/settings reads throw) and the logger's own box read loops
     // the app into a black screen.
+    final hook = navigateHook;
+    if (hook != null) {
+      hook(target, progressMs);
+      return;
+    }
     final route = Get.currentRoute;
     final off = route == '/videoV' || route == '/liveRoom';
     if (target.isLive) {
@@ -1092,6 +1141,7 @@ class WatchTogetherService {
     _memberPauseCooldownUntil = -double.infinity;
     _navigatePending = false;
     _navigateRetries = 0;
+    _navigateGiveUpTarget = null;
     _memberCoordinator.reset();
     debugLog.clear();
     if (!silent) {

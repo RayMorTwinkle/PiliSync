@@ -3,6 +3,10 @@ import 'dart:convert';
 import 'dart:io';
 import 'dart:math';
 
+// meta only — flutter/foundation would drag dart:ui into the pure-Dart
+// mirror tool (tool/wt_mirror.dart runs under `dart run`).
+import 'package:meta/meta.dart';
+
 import 'package:PiliPlus/services/watch_together/wt_models.dart';
 import 'package:PiliPlus/services/watch_together/wt_sync_logic.dart';
 
@@ -24,6 +28,13 @@ class WtSignalingClient {
   // the live one (interleaved connects used to leak zombie conns and
   // lose the periodic tsync timer's reference).
   int _socketGen = 0;
+  // Inbound liveness: a half-open socket keeps readyState=open forever
+  // (a NAT/network handover delivers no FIN), so readyState alone cannot
+  // detect death. In-room traffic is far denser than this bound — every
+  // heartbeat echoes, the server pings every 54s — silence beyond it
+  // means the conn is dead regardless of what readyState claims.
+  double _lastInboundAt = 0;
+  static const _inboundTimeoutSeconds = 12.0;
 
   String serverBase = 'wt.raymor.top';
   bool _secure = true;
@@ -123,6 +134,7 @@ class WtSignalingClient {
     _tsyncTimer = null;
     socket.pingInterval = const Duration(seconds: 30);
     _socket = socket;
+    _lastInboundAt = timeSync.localNow();
     _setState(WtConnectionState.connected);
     _reconnectAttempt = 0;
     _listen(socket);
@@ -135,33 +147,52 @@ class WtSignalingClient {
     _socketSub?.cancel();
     _socketSub = socket.listen(
       (data) {
+        _lastInboundAt = timeSync.localNow();
         try {
           final text = data is String ? data : utf8.decode(data as List<int>);
           final msg = jsonDecode(text) as Map<String, dynamic>;
           _handleServerMessage(msg);
         } catch (_) {}
       },
-      onDone: _handleDisconnect,
-      onError: (_) => _handleDisconnect(),
+      onDone: () => _onSocketDone(socket),
+      onError: (_) => _onSocketDone(socket),
       cancelOnError: true,
     );
   }
 
-  void _handleDisconnect() {
-    if (_disposed) return;
+  /// A socket reported done/errored. The identity check matters: after the
+  /// watchdog (or a reconnect) detached a zombie, its late onDone must not
+  /// clobber the replacement socket's state.
+  void _onSocketDone(WebSocket socket) {
+    if (_disposed || !identical(socket, _socket)) return;
     _socket = null;
     _setState(WtConnectionState.disconnected);
     _scheduleReconnect();
   }
 
-  /// Called periodically by the service: detects fake-alive sockets (state
-  /// says connected but the socket is dead) and starts recovery early
-  /// instead of waiting for the ping timeout.
+  /// Called periodically by the service: detects fake-alive sockets — state
+  /// says connected but the socket is dead, or inbound traffic has gone
+  /// silent past [_inboundTimeoutSeconds] (half-open conn) — and starts
+  /// recovery instead of waiting for the ping timeout that never comes.
   void ensureAlive() {
     if (_disposed || roomName == null) return;
-    if (state == WtConnectionState.connected && !isOpen) {
-      _handleDisconnect();
+    if (state != WtConnectionState.connected) return;
+    final socket = _socket;
+    if (socket == null) {
+      _setState(WtConnectionState.disconnected);
+      _scheduleReconnect();
+      return;
     }
+    if (socket.readyState == WebSocket.open &&
+        timeSync.localNow() - _lastInboundAt <= _inboundTimeoutSeconds) {
+      return;
+    }
+    // Detach before close(): the close handshake may stall, and the late
+    // onDone must not race the freshly opened replacement.
+    _socket = null;
+    _setState(WtConnectionState.disconnected);
+    unawaited(socket.close());
+    _scheduleReconnect();
   }
 
   static const _maxReconnectAttempt = 12;
@@ -182,7 +213,10 @@ class WtSignalingClient {
     _reconnectAttempt++;
     _reconnectTimer = Timer(delay, () {
       _reconnectTimer = null;
-      _openSocket().catchError((_) => _handleDisconnect());
+      // A parallel path (e.g. a manual connect) may already have recovered
+      // us while the backoff ran — don't open a competing socket.
+      if (state == WtConnectionState.connected && isOpen) return;
+      _openSocket().catchError((_) => _scheduleReconnect());
     });
   }
 
@@ -464,6 +498,14 @@ class WtSignalingClient {
       timeSync.updateIfNeeded(json['timestamp'] as num, start, end);
     } catch (_) {}
   }
+
+  /// Test seams for the inbound-liveness watchdog: inject a fake socket
+  /// and an arbitrary inbound timestamp without a live connection.
+  @visibleForTesting
+  set socketForTesting(WebSocket? s) => _socket = s;
+
+  @visibleForTesting
+  set lastInboundAtForTesting(double v) => _lastInboundAt = v;
 
   Future<void> disconnect() async {
     _disposed = true;

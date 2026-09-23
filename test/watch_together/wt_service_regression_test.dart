@@ -1,9 +1,35 @@
+import 'dart:io';
+
 import 'package:PiliPlus/services/watch_together/watch_together_service.dart';
 import 'package:PiliPlus/services/watch_together/wt_models.dart';
 import 'package:PiliPlus/services/watch_together/wt_signaling_client.dart';
+import 'package:PiliPlus/services/watch_together/wt_sync_logic.dart';
 import 'package:flutter_test/flutter_test.dart';
 
 import 'wt_member_coordinator_test.dart' show FakePlayer;
+
+class _FakeSync extends WtTimeSync {
+  double t = 1000;
+  @override
+  double localNow() => t;
+}
+
+/// Minimal WebSocket stand-in: only readyState/close matter to the
+/// watchdog; everything else falls through noSuchMethod.
+class _FakeSocket implements WebSocket {
+  @override
+  int readyState = WebSocket.open;
+  bool closeCalled = false;
+  @override
+  dynamic noSuchMethod(Invocation invocation) {
+    if (invocation.memberName == #readyState) return readyState;
+    if (invocation.memberName == #close) {
+      closeCalled = true;
+      return Future<void>.value();
+    }
+    return null;
+  }
+}
 
 class RecordingSignaling extends WtSignalingClient {
   final loadingReports = <bool>[];
@@ -468,4 +494,125 @@ void main() {
     await Future<void>.delayed(Duration.zero);
     expect(player.isPlaying, isFalse);
   }, timeout: const Timeout(Duration(seconds: 5)));
+
+  test('member re-follows room target when navigate broadcast was missed',
+      () async {
+    // A member whose socket was dead when the host's navigate(B) went out
+    // never saw the event and stayed on video A forever — calibration was
+    // skipped off-target but nothing re-armed the follow. The snapshot's
+    // target is authoritative: drift must re-navigate.
+    final player = FakePlayer()..isPlaying = true;
+    final client = RecordingSignaling();
+    addTearDown(client.dispose);
+    var now = 100.0;
+    final service = WatchTogetherService.forTesting(
+      player: player, client: client, clock: () => now,
+    );
+    service.role.value = WtRole.member;
+    service.inRoom.value = true;
+    final navs = <String>[];
+    service.navigateHook = (t, _) => navs.add(t.bvid ?? 'live:${t.roomId}');
+
+    // Member followed to video A via the joined snapshot.
+    service.handleEventForTesting(WtJoinedEvent(
+      WtRoomSnapshot(
+        name: 'test', isHost: false, isProtected: false, memberCount: 2,
+        waitForLoadding: false,
+        playback: WtPlaybackState(
+          paused: false, currentTime: 10, duration: 120,
+          lastUpdateClientTime: now,
+          target: const WtTarget(type: 'video', bvid: 'BV_A', cid: 1),
+        ),
+      ),
+      false, now,
+    ));
+    expect(service.currentTargetForTesting?.bvid, 'BV_A');
+    expect(navs, ['BV_A']);
+
+    // Host switched to B while our socket was dead — only the room
+    // snapshot reflects it. The next tick must re-arm the follow.
+    service.room.value = WtRoomSnapshot(
+      name: 'test', isHost: false, isProtected: false, memberCount: 2,
+      waitForLoadding: false,
+      playback: WtPlaybackState(
+        paused: false, currentTime: 0, duration: 120,
+        lastUpdateClientTime: now,
+        target: const WtTarget(type: 'video', bvid: 'BV_B', cid: 2),
+      ),
+    );
+    await service.tickForTesting();
+    expect(navs, ['BV_A', 'BV_B']);
+    expect(service.currentTargetForTesting?.bvid, 'BV_B');
+  }, timeout: const Timeout(Duration(seconds: 5)));
+
+  test('targetless room snapshot clears member stale target', () async {
+    // The host left the video page while the member's socket was dead —
+    // the null-navigate frame was missed. The tick's exit guard used to
+    // also require a locally-detected target, so a member stuck on a
+    // video route the route reader could not see stayed "in the video"
+    // forever.
+    final player = FakePlayer();
+    final client = RecordingSignaling();
+    addTearDown(client.dispose);
+    var now = 100.0;
+    final service = WatchTogetherService.forTesting(
+      player: player, client: client, clock: () => now,
+    );
+    service.role.value = WtRole.member;
+    service.inRoom.value = true;
+    service.navigateHook = (_, _) {};
+
+    service.handleEventForTesting(WtJoinedEvent(
+      WtRoomSnapshot(
+        name: 'test', isHost: false, isProtected: false, memberCount: 2,
+        waitForLoadding: false,
+        playback: WtPlaybackState(
+          paused: false, currentTime: 10, duration: 120,
+          lastUpdateClientTime: now,
+          target: const WtTarget(type: 'video', bvid: 'BV_A', cid: 1),
+        ),
+      ),
+      false, now,
+    ));
+    expect(service.currentTargetForTesting, isNotNull);
+
+    // Room went targetless (host quit the page). In the test env
+    // Get.currentRoute is not a watch route, so _exitVideoTarget clears
+    // the marker — the member is no longer "in a video".
+    service.room.value = WtRoomSnapshot(
+      name: 'test', isHost: false, isProtected: false, memberCount: 2,
+      waitForLoadding: false,
+      playback: WtPlaybackState(paused: true, lastUpdateClientTime: now),
+    );
+    await service.tickForTesting();
+    expect(service.currentTargetForTesting, isNull);
+  }, timeout: const Timeout(Duration(seconds: 5)));
+
+  test('inbound watchdog recovers a half-open socket', () {
+    // A NAT/network handover leaves the socket reporting open forever —
+    // readyState lies. In-room traffic (heartbeat echo ~2s, server ping
+    // 54s) never goes silent this long: >12s inbound silence means dead.
+    final client = WtSignalingClient();
+    addTearDown(client.dispose);
+    final sync = _FakeSync();
+    client.timeSync = sync;
+    client.roomName = '123456';
+    client.tempUser = 'u1';
+    client.password = 'pw';
+    final socket = _FakeSocket();
+    client.socketForTesting = socket;
+    client.state = WtConnectionState.connected;
+    client.lastInboundAtForTesting = sync.t;
+
+    // Fresh inbound traffic: the socket stays.
+    client.ensureAlive();
+    expect(socket.closeCalled, isFalse);
+    expect(client.state, WtConnectionState.connected);
+
+    // 20s of silence on an "open" socket: kill + schedule reconnect.
+    sync.t += 20;
+    client.ensureAlive();
+    expect(socket.closeCalled, isTrue);
+    expect(client.state, WtConnectionState.disconnected);
+  });
 }

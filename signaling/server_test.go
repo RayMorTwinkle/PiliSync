@@ -680,9 +680,10 @@ func TestLoadingNearEndIgnored(t *testing.T) {
 }
 
 // F11-i: when the host disconnects the earliest online member inherits
-// HostId; the next broadcastRoom snapshot promotes it client-side.
+// HostId — but only after hostHandoverGrace elapses, so a brief network
+// blip cannot permanently demote a returning host.
 func TestHostHandoverOnDisconnect(t *testing.T) {
-	srv := startTestServer(t)
+	srv, rooms := startTestServerRooms(t)
 	defer srv.Close()
 
 	host := dial(t, srv)
@@ -697,17 +698,120 @@ func TestHostHandoverOnDisconnect(t *testing.T) {
 
 	_ = host.Close()
 
-	// The member gets peer_left then a room snapshot with isHost=true.
+	// peer_left is immediate, but the handover is deferred by
+	// hostHandoverGrace — the post-disconnect snapshot still reports the
+	// member as non-host so a host blip cannot swap roles mid-reconnect.
 	waitFor(t, member, "peer_left", 2*time.Second)
 	snap := waitFor(t, member, "room", 2*time.Second)
+	if snap["room"].(map[string]any)["isHost"] != false {
+		t.Fatalf("handover must wait out the grace period, got %v", snap)
+	}
+
+	// Force the grace to be due and sweep — now the member promotes.
+	room := rooms.Get("r1")
+	room.mu.Lock()
+	room.hostGoneAt = time.Now().Add(-hostHandoverGrace - time.Second)
+	room.mu.Unlock()
+	rooms.sweepHandovers()
+
+	waitFor(t, member, "host_changed", 2*time.Second)
+	snap = waitFor(t, member, "room", 2*time.Second)
 	if snap["room"].(map[string]any)["isHost"] != true {
-		t.Fatalf("member should inherit host, got %v", snap)
+		t.Fatalf("member should inherit host after the grace, got %v", snap)
 	}
 	// The promoted member's update must now be accepted, not rejected
 	// with other_host_syncing.
 	send(member, updateMsg("r1", "pw1", "memB", 20))
 	if ack := waitFor(t, member, "update_ack", 2*time.Second); ack["room"].(map[string]any)["isHost"] != true {
 		t.Fatalf("promoted member update should ack isHost=true, got %v", ack)
+	}
+}
+
+// A host that rejoins inside the grace window keeps the role — the room
+// must not flip it to member via a stale handover.
+func TestHostRejoinWithinGraceKeepsRole(t *testing.T) {
+	srv, rooms := startTestServerRooms(t)
+	defer srv.Close()
+
+	host := dial(t, srv)
+	member := dial(t, srv)
+	defer member.Close()
+
+	send(host, updateMsgWithTarget("r1", "pw1", "hostA", 10))
+	waitFor(t, host, "update_ack", 2*time.Second)
+	send(member, map[string]any{"type": "join", "room": "r1", "password": "pw1", "tempUser": "memB"})
+	waitFor(t, member, "joined", 2*time.Second)
+	waitFor(t, host, "peer_joined", 2*time.Second)
+
+	_ = host.Close()
+	waitFor(t, member, "peer_left", 2*time.Second)
+	// Drain the post-disconnect room snapshot so a later "room" read
+	// unambiguously belongs to the rejoin flow.
+	_ = waitFor(t, member, "room", 2*time.Second)
+
+	// Same identity rejoins on a fresh conn before the grace elapses.
+	host2 := dial(t, srv)
+	defer host2.Close()
+	send(host2, map[string]any{"type": "join", "room": "r1", "password": "pw1", "tempUser": "hostA"})
+	j := waitFor(t, host2, "joined", 2*time.Second)
+	if j["isHost"] != true {
+		t.Fatalf("rejoining inside the grace must keep the host role, got %v", j)
+	}
+
+	// The sweep sees the member record back online and cancels the
+	// pending handover instead of promoting the member.
+	rooms.sweepHandovers()
+	room := rooms.Get("r1")
+	room.mu.Lock()
+	pending := !room.hostGoneAt.IsZero()
+	room.mu.Unlock()
+	if pending {
+		t.Fatalf("host rejoin must clear the pending handover")
+	}
+	if !room.IsHost("hostA") {
+		t.Fatalf("hostA must still own the room after rejoin")
+	}
+
+	// The member must still be a member — and its update must NOT be
+	// treated as a host update.
+	send(member, updateMsg("r1", "pw1", "memB", 20))
+	waitForErr(t, member, "other_host_syncing", 2*time.Second)
+}
+
+// navigate(nil) (host left the video page) must scrub the playback meta
+// too — otherwise snapshots keep presenting the stale url/title and the
+// room still looks "in a video" to joiners and dashboards.
+func TestNavigateNullClearsPlaybackMeta(t *testing.T) {
+	srv, rooms := startTestServerRooms(t)
+	defer srv.Close()
+
+	host := dial(t, srv)
+	defer host.Close()
+
+	send(host, map[string]any{
+		"type": "update", "room": "r1", "password": "pw1", "tempUser": "hostA",
+		"playback": map[string]any{
+			"playbackRate": 1.0, "currentTime": 42, "paused": false,
+			"duration": 100.0, "lastUpdateClientTime": 1000.0,
+			"url": "BV1xx", "videoTitle": "old video",
+			"target": map[string]any{"type": "video", "bvid": "BV1xx", "cid": 123},
+		},
+	})
+	waitFor(t, host, "update_ack", 2*time.Second)
+
+	send(host, map[string]any{
+		"type": "navigate", "room": "r1", "password": "pw1", "tempUser": "hostA",
+	})
+	time.Sleep(50 * time.Millisecond)
+
+	room := rooms.Get("r1")
+	if room == nil {
+		t.Fatal("room missing")
+	}
+	room.mu.Lock()
+	defer room.mu.Unlock()
+	if room.Playback.Target != nil || room.Playback.Url != "" || room.Playback.VideoTitle != "" {
+		t.Fatalf("null navigate must clear target+url+title, got %+v", room.Playback)
 	}
 }
 

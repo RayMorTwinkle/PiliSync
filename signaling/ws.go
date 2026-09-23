@@ -122,6 +122,14 @@ func NewHub(rooms *RoomStore) *Hub {
 		rooms:       rooms,
 	}
 	rooms.onExpire = h.closeRoom
+	rooms.onHandover = func(room *Room, from, to string) {
+		h.broadcast(room, map[string]any{
+			"type": "host_changed",
+			"from": from,
+			"to":   to,
+		}, nil)
+		h.broadcastRoom(room, nil)
+	}
 	return h
 }
 
@@ -909,7 +917,6 @@ func (h *Hub) disconnect(c *Client) {
 			}
 		}
 	}
-	var newHost string
 	if existed && room != nil && tempUser != "" && !stillBound {
 		// Member removal + conditional handover run inside the h.mu
 		// critical section: join/update bind+upsert under the same lock,
@@ -919,7 +926,10 @@ func (h *Hub) disconnect(c *Client) {
 		room.mu.Lock()
 		delete(room.members, tempUser)
 		if room.HostId == tempUser {
-			newHost = room.transferHostLocked()
+			// Defer the handover by hostHandoverGrace (swept by the store's
+			// handoverLoop): a brief network blip must not permanently
+			// demote the returning host to member via other_host_syncing.
+			room.hostGoneAt = time.Now()
 		}
 		room.mu.Unlock()
 	}
@@ -929,9 +939,6 @@ func (h *Hub) disconnect(c *Client) {
 	}
 
 	if room != nil && tempUser != "" && !stillBound {
-		if newHost != "" {
-			log.Printf("[host] handover room=%s %s -> %s", roomName, tempUser, newHost)
-		}
 		h.broadcast(room, map[string]any{
 			"type":            "peer_left",
 			"tempUser":        tempUser,
