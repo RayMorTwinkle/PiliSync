@@ -69,7 +69,10 @@ jobs:
         run: |
           set -e
           BODY=$(gh release view "${{ github.event.inputs.tag }}" --repo "${{ github.repository }}" --json body -q .body 2>/dev/null || echo "")
-          curl -fsSL -X POST "https://wt.raymor.top/update/publish" \
+          # 直连源站绕开 Cloudflare：CF 免费版 100s 超时，DMG ~70MB 上传+网盘转存会 524。
+          # IP 是 SM 源站（ServerX DEVICES/README.md），变更时同步更新。
+          curl -fsSL -X POST --resolve "wt.raymor.top:8443:122.51.139.252" \
+            "https://wt.raymor.top:8443/update/publish" \
             -H "X-API-Key: ${PUBLISH_SECRET}" \
             -F "platform=macos" \
             -F "name=pilisync-latest.dmg" \
