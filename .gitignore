@@ -151,13 +151,8 @@ dist
 
 test.dart
 
-docs/*
-!docs/av-sync-playbook.md
-!docs/danmaku_font_scaling.md
-!docs/inapp_pip_implementation.md
-!docs/local-dev-notes.md
-!docs/spec/
-!docs/spec/**
+docs
+AGENTS.md
 test*.dart
 
 CLAUDE.md
