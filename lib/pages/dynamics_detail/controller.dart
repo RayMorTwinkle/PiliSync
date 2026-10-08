@@ -1,3 +1,5 @@
+import 'dart:async';
+
 import 'package:flutter/foundation.dart' show ValueChanged;
 import 'package:PiliPlus/common/widgets/scroll_physics.dart' show ReloadMixin;
 import 'package:PiliPlus/http/dynamics.dart';
@@ -11,6 +13,10 @@ import 'package:get/get.dart';
 
 class DynamicDetailController extends CommonDynController with ReloadMixin {
   static const String _kWebLinkPlaceholder = '网页链接';
+
+  DynamicDetailController({super.count});
+
+  @override
   late int oid;
   late int replyType;
   late DynamicItemModel dynItem;
@@ -130,7 +136,7 @@ class DynamicDetailController extends CommonDynController with ReloadMixin {
       action: action,
     );
     if (res.isSuccess) {
-      Future.delayed(const Duration(milliseconds: 500), () {
+      Timer(const Duration(milliseconds: 500), () {
         if (!isClosed) {
           onReload();
         }

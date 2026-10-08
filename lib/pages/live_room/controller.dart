@@ -1,5 +1,6 @@
 import 'dart:async' show Timer, StreamSubscription;
 import 'dart:convert' show jsonDecode;
+import 'dart:io' show Platform;
 import 'dart:math' as math;
 
 import 'package:PiliPlus/common/widgets/dialog/report.dart';
@@ -30,10 +31,12 @@ import 'package:PiliPlus/plugin/pl_player/utils/danmaku_options.dart';
 import 'package:PiliPlus/services/service_locator.dart';
 import 'package:PiliPlus/tcp/live.dart';
 import 'package:PiliPlus/utils/accounts.dart';
+import 'package:PiliPlus/utils/android/bindings.g.dart';
 import 'package:PiliPlus/utils/connectivity_utils.dart';
 import 'package:PiliPlus/utils/danmaku_utils.dart';
 import 'package:PiliPlus/utils/duration_utils.dart';
 import 'package:PiliPlus/utils/extension/iterable_ext.dart';
+import 'package:PiliPlus/utils/extension/rx_ext.dart';
 import 'package:PiliPlus/utils/global_data.dart';
 import 'package:PiliPlus/utils/num_utils.dart';
 import 'package:PiliPlus/utils/platform_utils.dart';
@@ -68,6 +71,14 @@ class LiveRoomController extends GetxController {
 
   // PiP 模式标志
   RxBool isInPipMode = false.obs;
+
+  // 三点菜单「应用内画中画」的触发入口，由直播页 State 绑定：
+  // 小窗流程依赖页面的路由生命周期（pop 收起），controller 自身无法发起
+  VoidCallback? onRequestInAppPip;
+
+  /// 直播页能否被 pop：页面 popScope 的 canPop 与三点菜单小窗入口共用
+  bool get canPopPage =>
+      !plPlayerController.isFullScreen.value && !plPlayerController.isDesktopPip;
 
   Timer? liveTimeTimer;
 
@@ -118,9 +129,8 @@ class LiveRoomController extends GetxController {
   final disableAutoScroll = false.obs;
   bool autoScroll = true;
   LiveMessageStream? _msgStream;
-  Future<void>? _blockRulesFuture;
-  List<String> keywordList = const [];
-  Set<int> shieldUids = const {};
+  List<String> _keywordList = const [];
+  Set<int> _shieldUids = const {};
   late final ScrollController scrollController;
   late final RxInt pageIndex = 0.obs;
   PageController? pageController;
@@ -174,6 +184,21 @@ class LiveRoomController extends GetxController {
     return const SizedBox.shrink();
   });
 
+  int chatSimpleIndex = 0;
+  int _trimDmIndex = 0;
+  int get trimDmIndex => _trimDmIndex;
+  void _trimDm() {
+    final trimCount = messages.length - _trimDmIndex;
+    if (trimCount > _kTrimCount) {
+      final endIndex = messages.length - _kMaxChatCount;
+      final canTrim = (chatSimpleIndex - endIndex) > _kSafeTrimIndex;
+      if (canTrim) {
+        messages.fillRangeOnly(_trimDmIndex, endIndex);
+        _trimDmIndex = endIndex;
+      }
+    }
+  }
+
   StreamSubscription? _sizeSub;
 
   void _onSizeChanged((int, int) value) {
@@ -198,6 +223,7 @@ class LiveRoomController extends GetxController {
   @override
   void onInit() {
     super.onInit();
+    plPlayerController.onNeedsPlayerInit = () => queryLiveUrl();
 
     // 从参数中提取 roomId（支持 int 或 Map 格式）
     final args = Get.arguments;
@@ -305,12 +331,16 @@ class LiveRoomController extends GetxController {
       isPortrait.value = response.isPortrait ?? false;
       stream = playurl.stream;
       _initStreamIndex();
-      await initLiveUrl(
-        streamIndex: streamIndex,
-        formatIndex: formatIndex,
-        codecIndex: codecIndex,
-        liveUrlIndex: liveUrlIndex,
-      );
+      await Future.wait([
+        ?initLiveUrl(
+          streamIndex: streamIndex,
+          formatIndex: formatIndex,
+          codecIndex: codecIndex,
+          liveUrlIndex: liveUrlIndex,
+        ),
+        if (!isLoaded.value && Accounts.heartbeat.isLogin) _fetchBlockRules(),
+      ]);
+
       // 置于 initLiveUrl 之后：恢复场景的首次拉取靠该标志让 playerInit 跳过
       // 数据源重建，完成后清零，切换路线/画质才会真正重建数据源
       isReturningFromPip = false;
@@ -519,14 +549,11 @@ class LiveRoomController extends GetxController {
     );
   }
 
-  void scrollToBottom([_]) {
-    if (!scrollController.hasClients) return;
+  void scrollToBottom() {
     EasyThrottle.throttle(
       'liveDm',
       const Duration(milliseconds: 500),
-      () => WidgetsBinding.instance.addPostFrameCallback(
-        _scrollToBottom,
-      ),
+      () => WidgetsBinding.instance.addPostFrameCallback(_scrollToBottom),
     );
   }
 
@@ -580,7 +607,7 @@ class LiveRoomController extends GetxController {
 
   Future<void> getSuperChatMsg() async {
     final res = await LiveHttp.superChatMsg(roomId);
-    if (res.dataOrNull?.list case final list?) {
+    if (res.dataOrNull?.list case final list? when list.isNotEmpty) {
       superChatMsg.addAll(list);
     }
   }
@@ -589,24 +616,25 @@ class LiveRoomController extends GetxController {
     superChatMsg.removeWhere((e) => e.expired);
   }
 
-  Future<void> fetchBlockRules() async {
+  Future<void> _fetchBlockRules() async {
     final res = await LiveHttp.getLiveInfoByUser(roomId);
-    if (res case Success(:final response)) {
-      keywordList = response?.keywordList ?? const [];
-      shieldUids = {
-        for (final item in response?.shieldUserList ?? const [])
-          if (item.uid != null) item.uid!,
-      };
+    if (res case Success(:final response?)) {
+      if (response.keywordList case final keywordList?) {
+        _keywordList = keywordList;
+      }
+      if (response.shieldUserList case final shieldUserList?) {
+        _shieldUids = shieldUserList.map((e) => e.uid).toSet();
+      }
     }
   }
 
-  void updateBlockRules(Iterable<String> keywords, Iterable<int> uids) {
-    keywordList = keywords.toList();
-    shieldUids = uids.toSet();
+  void updateBlockRules(List<String> keywords, Set<int> uids) {
+    _keywordList = keywords;
+    _shieldUids = uids;
   }
 
   bool isBlocked(String text, Object uid) {
-    return keywordList.any(text.contains) || shieldUids.contains(uid);
+    return _keywordList.any(text.contains) || _shieldUids.contains(uid);
   }
 
   void startLiveMsg() {
@@ -656,6 +684,7 @@ class LiveRoomController extends GetxController {
 
   @override
   void onClose() {
+    plPlayerController.onNeedsPlayerInit = null;
     _stopSizeSub();
     // 心跳定时器是静态的，无论是否小窗都要取消
     LiveHttp.cancelLiveHeartbeat();
@@ -692,7 +721,7 @@ class LiveRoomController extends GetxController {
   }
 
   void initDm(LiveDmInfoData info) {
-    if (info.hostList.isNullOrEmpty) {
+    if (info.hostList.isEmpty) {
       return;
     }
     _msgStream =
@@ -732,15 +761,15 @@ class LiveRoomController extends GetxController {
           final info = obj['info'];
           final first = info[0];
           final content = first[15];
-          final Map<String, dynamic> extra = jsonDecode(content['extra']);
           final user = content['user'];
           // final midHash = first[7];
           final uid = user['uid'];
-          final name = user['base']['name'];
           final msg = info[1];
           if (isBlocked(msg, uid)) {
             return;
           }
+          final Map<String, dynamic> extra = jsonDecode(content['extra']);
+          final name = user['base']['name'];
           BaseEmote? uemote;
           if (first[13] case Map<String, dynamic> map) {
             uemote = BaseEmote.fromJson(map);
@@ -788,8 +817,10 @@ class LiveRoomController extends GetxController {
           );
           break;
         case 'SUPER_CHAT_MESSAGE' when showSuperChat:
-          final item = SuperChatItem.fromJson(obj['data']);
+          final item = SuperChatItem.fromJson(obj['data'], roomId);
           superChatMsg.insert(0, item);
+          addDm(item);
+          if (Platform.isAndroid && AndroidHelper.isPipMode) return;
           if (plPlayerController.showDanmaku &&
               (isFullScreen || plPlayerController.isDesktopPip)) {
             fsSC.value = item.copyWith(
@@ -799,7 +830,6 @@ class LiveRoomController extends GetxController {
               ),
             );
           }
-          addDm(item);
           break;
         // case 'SUPER_CHAT_MESSAGE_DELETE' when showSuperChat:
         //   if (obj['roomid'] == roomId) {
@@ -847,16 +877,13 @@ class LiveRoomController extends GetxController {
     likeClickTimer = null;
   }
 
-  void onLikeTapDown([_]) {
+  void onLikeTapDown(_) {
     cancelLikeTimer();
     likeClickTime.value++;
   }
 
   void onLikeTapUp([_]) {
-    likeClickTimer ??= Timer(
-      const Duration(milliseconds: 800),
-      onLike,
-    );
+    likeClickTimer ??= Timer(const Duration(milliseconds: 800), onLike);
   }
 
   Future<void> onLike() async {
@@ -878,9 +905,13 @@ class LiveRoomController extends GetxController {
     likeClickTime.value = 0;
   }
 
+  void toastNotLogin() {
+    SmartDialog.showToast('账号未登录');
+  }
+
   void onSendDanmaku([bool fromEmote = false]) {
     if (kReleaseMode && !isLogin) {
-      SmartDialog.showToast('账号未登录');
+      toastNotLogin();
       return;
     }
     Get.key.currentState!.push(
@@ -914,9 +945,21 @@ class LiveRoomController extends GetxController {
     );
   }
 
+  void onAtUser(DanmakuMsg item) {
+    savedDanmaku = [
+      RichTextItem.fromStart(
+        '@${item.name} ',
+        rawText: item.extra.mid.toString(),
+        type: .at,
+        id: item.extra.id.toString(),
+      ),
+    ];
+    onSendDanmaku();
+  }
+
   void reportSC(SuperChatItem item) {
     if (!isLogin) {
-      SmartDialog.showToast('账号未登录');
+      toastNotLogin();
       return;
     }
     autoWrapReportDialog(

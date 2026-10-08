@@ -9,7 +9,6 @@ import 'package:PiliPlus/common/widgets/custom_icon.dart';
 import 'package:PiliPlus/common/widgets/extra_hittest_stack.dart';
 import 'package:PiliPlus/common/widgets/flutter/popup_menu.dart';
 import 'package:PiliPlus/common/widgets/flutter/pop_scope.dart';
-import 'package:PiliPlus/common/widgets/flutter/text_field/controller.dart';
 import 'package:PiliPlus/common/widgets/gesture/horizontal_drag_gesture_recognizer.dart';
 import 'package:PiliPlus/common/widgets/image/network_img_layer.dart';
 import 'package:PiliPlus/common/widgets/keep_alive_wrapper.dart';
@@ -81,6 +80,10 @@ class _LiveRoomPageState extends State<LiveRoomPage>
 
   // 标志位：是否正在进入 PiP 模式
   bool _isEnteringPipMode = false;
+
+  // 标志位：三点菜单「应用内画中画」发起的 pop，一次性；由 _onPopInvokedWithResult 消费，
+  // 让本次收起绕过设置开关
+  bool _manualPipRequested = false;
 
   late final GlobalKey pageKey = GlobalKey();
   late final GlobalKey chatKey = GlobalKey();
@@ -202,6 +205,7 @@ class _LiveRoomPageState extends State<LiveRoomPage>
     plPlayerController = _liveRoomController.plPlayerController
       ..addStatusLister(playerListener);
     PlPlayerController.setPlayCallBack(plPlayerController.play);
+    _liveRoomController.onRequestInAppPip = _enterLivePipManually;
 
     if (isReturningFromPip) {
       _liveRoomController.isInPipMode.value = false;
@@ -384,6 +388,9 @@ class _LiveRoomPageState extends State<LiveRoomPage>
       PlPlayerController.setPlayCallBack(null);
     }
     plPlayerController.removeStatusLister(playerListener);
+    if (_liveRoomController.onRequestInAppPip == _enterLivePipManually) {
+      _liveRoomController.onRequestInAppPip = null;
+    }
     if (!isInLivePip && !_isEnteringPipMode) {
       plPlayerController.dispose();
     }
@@ -585,7 +592,7 @@ class _LiveRoomPageState extends State<LiveRoomPage>
       );
     }
     final Widget result = popScope(
-      canPop: !isFullScreen && !plPlayerController.isDesktopPip,
+      canPop: _canPopPage,
       onPopInvokedWithResult: _onPopInvokedWithResult,
       child: player,
     );
@@ -596,9 +603,17 @@ class _LiveRoomPageState extends State<LiveRoomPage>
         : result;
   }
 
+  // 本页能否被 pop 收起：popScope 的 canPop 与手动小窗入口共用同一判定
+  bool get _canPopPage => _liveRoomController.canPopPage;
+
   void _onPopInvokedWithResult(bool didPop, Object? result) {
     if (didPop) {
-      _startLivePipIfNeeded();
+      final manual = _manualPipRequested;
+      _manualPipRequested = false;
+      _startLivePipIfNeeded(manual: manual);
+    } else {
+      // pop 被拦下，手动小窗的一次性豁免不能留给下一次普通返回
+      _manualPipRequested = false;
     }
     plPlayerController.onPopInvokedWithResult(
       didPop,
@@ -607,8 +622,60 @@ class _LiveRoomPageState extends State<LiveRoomPage>
     );
   }
 
-  bool _shouldStartLivePip() {
-    if (!Pref.enableInAppPip) {
+  /// 三点菜单「应用内画中画」：不依赖设置开关，把当前直播临时收进小窗。
+  /// 复用返回键收起路径（pop → _onPopInvokedWithResult → _startLivePipIfNeeded），
+  /// 只是提前把条件凑齐：全屏的先退全屏、暂停的先续播、嵌套页先静默移除
+  Future<void> _enterLivePipManually() async {
+    if (!mounted || _isEnteringPipMode || _manualPipRequested) {
+      return;
+    }
+    if (plPlayerController.isFullScreen.value) {
+      // 全屏时返回键语义是"退出全屏"，页面本就不能被 pop；且直接 pop 会把
+      // 播放器单例的 isFullScreen 留在 true、方向也不复位。先退回半屏再走正常流程
+      final rectBeforeExit = _livePlayerRect();
+      await plPlayerController.triggerFullScreen(status: false);
+      if (!mounted) {
+        return;
+      }
+      // 退出全屏会切到半屏的布局分支（与方向是否变化无关），布局落定前
+      // _livePlayerRect() 量的还是全屏时的整屏位置，收起动画会从整屏开始。
+      // 以播放器矩形变化为落定信号；不能拿 MediaQuery.size 当信号——
+      // 移动端退全屏只是隐藏系统栏，size 并不变
+      // 量不到基线矩形（播放器未就绪，收起本来也不会有动画）时不必等
+      await PipOverlayService.awaitLayoutSettled(
+        () => rectBeforeExit == null || _livePlayerRect() != rectBeforeExit,
+      );
+      if (!mounted) {
+        return;
+      }
+    }
+    if (plPlayerController.videoController != null &&
+        !plPlayerController.playerStatus.isPlaying) {
+      // 手动进小窗是明确的播放意图
+      await plPlayerController.play();
+      if (!mounted) {
+        return;
+      }
+    }
+    if (!_canPopPage || !_shouldStartLivePip(manual: true)) {
+      SmartDialog.showToast('当前无法进入小窗');
+      return;
+    }
+    if (PipOverlayService.removeNestedVideoLikeRoutesBelow(context) > 0) {
+      // 被移除的页面要到下一帧才卸载并归还各自的播放器计数；等它们落地再 pop，
+      // 否则小窗按 X 关闭时计数未归零、播放器不会真正销毁
+      await WidgetsBinding.instance.endOfFrame;
+      if (!mounted) {
+        return;
+      }
+    }
+    _manualPipRequested = true;
+    Get.back();
+  }
+
+  /// [manual] 为三点菜单手动触发：不受设置开关约束
+  bool _shouldStartLivePip({bool manual = false}) {
+    if (!manual && !Pref.enableInAppPip) {
       return false;
     }
     if (LivePipOverlayService.isInPipMode) {
@@ -627,8 +694,8 @@ class _LiveRoomPageState extends State<LiveRoomPage>
     return true;
   }
 
-  void _startLivePipIfNeeded() {
-    if (!_shouldStartLivePip()) {
+  void _startLivePipIfNeeded({bool manual = false}) {
+    if (!_shouldStartLivePip(manual: manual)) {
       return;
     }
     // 设置小窗模式标志
@@ -830,10 +897,7 @@ class _LiveRoomPageState extends State<LiveRoomPage>
       if (_liveRoomController.onlineCount.value case final onlineCount?) {
         return Text(
           '高能观众($onlineCount)',
-          style: const TextStyle(
-            fontSize: 12,
-            color: Colors.white,
-          ),
+          style: const TextStyle(fontSize: 12, color: Colors.white),
         );
       }
       return const SizedBox.shrink();
@@ -1066,18 +1130,7 @@ class _LiveRoomPageState extends State<LiveRoomPage>
     Widget chat() => LiveRoomChatPanel(
       key: chatKey,
       isPP: isPP,
-      roomId: _liveRoomController.roomId,
       liveRoomController: _liveRoomController,
-      onAtUser: (item) => _liveRoomController
-        ..savedDanmaku = [
-          RichTextItem.fromStart(
-            '@${item.name} ',
-            rawText: item.extra.mid.toString(),
-            type: .at,
-            id: item.extra.id.toString(),
-          ),
-        ]
-        ..onSendDanmaku(),
     );
     return Padding(
       padding: .only(bottom: 12, top: isPortrait ? 12 : 0),
@@ -1156,25 +1209,32 @@ class _LiveRoomPageState extends State<LiveRoomPage>
                   },
                 ),
                 const Expanded(
-                  child: Text(
-                    '发送弹幕',
-                    style: TextStyle(color: baseWhite),
-                  ),
+                  child: Text('发送弹幕', style: TextStyle(color: baseWhite)),
                 ),
                 Builder(
                   builder: (context) {
-                    final colorScheme = Theme.of(context).colorScheme;
+                    final isLogin = kDebugMode || _liveRoomController.isLogin;
+                    final colorScheme = ColorScheme.of(context);
                     return Material(
                       type: MaterialType.transparency,
                       child: Stack(
                         clipBehavior: Clip.none,
                         children: [
                           InkWell(
-                            overlayColor: overlayColor(colorScheme),
+                            overlayColor: _overlayColor(colorScheme),
                             customBorder: const CircleBorder(),
-                            onTapDown: _liveRoomController.onLikeTapDown,
-                            onTapUp: _liveRoomController.onLikeTapUp,
-                            onTapCancel: _liveRoomController.onLikeTapUp,
+                            onTap: isLogin
+                                ? null
+                                : _liveRoomController.toastNotLogin,
+                            onTapDown: isLogin
+                                ? _liveRoomController.onLikeTapDown
+                                : null,
+                            onTapUp: isLogin
+                                ? _liveRoomController.onLikeTapUp
+                                : null,
+                            onTapCancel: isLogin
+                                ? _liveRoomController.onLikeTapUp
+                                : null,
                             child: const SizedBox.square(
                               dimension: 34,
                               child: Icon(
@@ -1259,29 +1319,20 @@ class _LiveRoomPageState extends State<LiveRoomPage>
     return child;
   }
 
-  WidgetStateProperty<Color?>? overlayColor(ColorScheme theme) =>
+  WidgetStateProperty<Color?>? _overlayColor(ColorScheme colorScheme) =>
       WidgetStateProperty.resolveWith((Set<WidgetState> states) {
-        if (states.contains(WidgetState.selected)) {
-          if (states.contains(WidgetState.pressed)) {
-            return theme.primary.withValues(alpha: 0.1);
-          }
-          if (states.contains(WidgetState.hovered)) {
-            return theme.primary.withValues(alpha: 0.08);
-          }
-          if (states.contains(WidgetState.focused)) {
-            return theme.primary.withValues(alpha: 0.1);
-          }
-        }
+        final color = states.contains(WidgetState.selected)
+            ? colorScheme.primary
+            : colorScheme.onSurfaceVariant;
         if (states.contains(WidgetState.pressed)) {
-          return theme.onSurfaceVariant.withValues(alpha: 0.1);
+          return color.withValues(alpha: 0.1);
+        } else if (states.contains(WidgetState.hovered)) {
+          return color.withValues(alpha: 0.08);
+        } else if (states.contains(WidgetState.focused)) {
+          return color.withValues(alpha: 0.1);
+        } else {
+          return Colors.transparent;
         }
-        if (states.contains(WidgetState.hovered)) {
-          return theme.onSurfaceVariant.withValues(alpha: 0.08);
-        }
-        if (states.contains(WidgetState.focused)) {
-          return theme.onSurfaceVariant.withValues(alpha: 0.1);
-        }
-        return Colors.transparent;
       });
 }
 

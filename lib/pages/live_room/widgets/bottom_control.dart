@@ -9,6 +9,7 @@ import 'package:PiliPlus/plugin/pl_player/widgets/play_pause_btn.dart';
 import 'package:PiliPlus/utils/storage.dart';
 import 'package:PiliPlus/utils/storage_key.dart';
 import 'package:PiliPlus/utils/theme_utils.dart';
+import 'package:flutter/foundation.dart' show kDebugMode;
 import 'package:flutter_smart_dialog/flutter_smart_dialog.dart';
 import 'package:get/get.dart';
 import 'package:material_ui/material_ui.dart';
@@ -45,11 +46,7 @@ class _BottomControlState extends State<BottomControl> with HeaderMixin {
   Widget build(BuildContext context) {
     final isFullScreen = plPlayerController.isFullScreen.value;
     return Padding(
-      padding: const .only(
-        left: 14,
-        right: 14,
-        bottom: (kToolbarHeight - 30) / 2,
-      ),
+      padding: const .symmetric(horizontal: 14, vertical: 13),
       child: Material(
         type: .transparency,
         child: Row(
@@ -75,7 +72,7 @@ class _BottomControlState extends State<BottomControl> with HeaderMixin {
                 color: Colors.white,
               ),
               onTap: () {
-                if (liveRoomCtr.isLogin) {
+                if (kDebugMode || liveRoomCtr.isLogin) {
                   Get.toNamed(
                     '/liveDmBlockPage',
                     parameters: {

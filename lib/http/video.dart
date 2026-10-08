@@ -5,6 +5,7 @@ import 'package:PiliPlus/grpc/bilibili/main/community/reply/v1.pb.dart'
     show ReplyInfo;
 import 'package:PiliPlus/http/api.dart';
 import 'package:PiliPlus/http/browser_ua.dart';
+import 'package:PiliPlus/http/constants.dart';
 import 'package:PiliPlus/http/init.dart';
 import 'package:PiliPlus/http/loading_state.dart';
 import 'package:PiliPlus/http/login.dart';
@@ -96,23 +97,23 @@ abstract final class VideoHttp {
     required int freshIdx,
   }) async {
     final params = {
-      'build': 2001100,
+      'build': 8430300,
       'c_locale': 'zh_CN',
       'channel': 'master',
-      'column': 4,
-      'device': 'pad',
+      'column': 2,
+      'device': 'phone',
       'device_name': 'android',
       'device_type': 0,
       'disable_rcmd': 0,
-      'flush': 5,
+      'flush': 8,
       'fnval': 976,
       'fnver': 0,
       'force_host': 2, //使用https
       'fourk': 1,
-      'guidance': 0,
-      'https_url_req': 0,
+      'guidance': 1,
+      'https_url_req': 1,
       'idx': freshIdx,
-      'mobi_app': 'android_hd',
+      'mobi_app': 'android_i',
       'network': 'wifi',
       'platform': 'android',
       'player_net': 1,
@@ -121,7 +122,7 @@ abstract final class VideoHttp {
       'recsys_mode': 0,
       's_locale': 'zh_CN',
       'splash_id': '',
-      'statistics': Constants.statistics,
+      'statistics': Constants.statisticsApp,
       'voice_balance': 0,
     };
     final res = await Request().get(
@@ -223,7 +224,7 @@ abstract final class VideoHttp {
     int? avid,
     String? bvid,
     required int cid,
-    int? qn,
+    required int qn,
     dynamic epid,
     dynamic seasonId,
     required bool tryLook,
@@ -239,7 +240,7 @@ abstract final class VideoHttp {
       'ep_id': ?epid,
       'season_id': ?seasonId,
       'cid': cid,
-      'qn': qn ?? 80,
+      'qn': qn,
       // 获取所有格式的视频
       'fnval': 4048,
       'fourk': 1,
@@ -1088,6 +1089,13 @@ abstract final class VideoHttp {
     final res = await Request().get(
       Api.popularSeriesList,
       queryParameters: await WbiSign.makSign({'web_location': 333.934}),
+      options: Options(
+        headers: const {
+          'user-agent': BrowserUa.pc,
+          'origin': HttpString.baseUrl,
+          'referer': 'https://www.bilibili.com/v/popular/weekly',
+        },
+      ),
     );
     if (res.data['code'] == 0) {
       return Success(
@@ -1111,6 +1119,13 @@ abstract final class VideoHttp {
         'number': number,
         'web_location': 333.934,
       }),
+      options: Options(
+        headers: {
+          'user-agent': BrowserUa.pc,
+          'origin': HttpString.baseUrl,
+          'referer': 'https://www.bilibili.com/v/popular/weekly?num=$number',
+        },
+      ),
     );
     if (res.data['code'] == 0) {
       return Success(PopularSeriesOneData.fromJson(res.data['data']));
@@ -1129,6 +1144,13 @@ abstract final class VideoHttp {
         'page': page,
         'web_location': 333.934,
       }),
+      options: Options(
+        headers: const {
+          'user-agent': BrowserUa.pc,
+          'origin': HttpString.baseUrl,
+          'referer': 'https://www.bilibili.com/v/popular/history',
+        },
+      ),
     );
     if (res.data['code'] == 0) {
       return Success(PopularPreciousData.fromJson(res.data['data']));

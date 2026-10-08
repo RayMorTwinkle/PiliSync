@@ -10,6 +10,7 @@ import 'package:PiliPlus/pages/setting/pages/fullscreen_sc_size.dart';
 import 'package:PiliPlus/pages/setting/widgets/select_dialog.dart';
 import 'package:PiliPlus/plugin/pl_player/controller.dart';
 import 'package:PiliPlus/pages/setting/widgets/slider_dialog.dart';
+import 'package:PiliPlus/plugin/pl_player/controller.dart';
 import 'package:PiliPlus/plugin/pl_player/models/bottom_progress_behavior.dart';
 import 'package:PiliPlus/plugin/pl_player/models/fullscreen_mode.dart';
 import 'package:PiliPlus/plugin/pl_player/models/play_repeat.dart';
@@ -31,6 +32,13 @@ List<SettingsModel> get playSettings => [
     leading: Icon(CustomIcons.dm_settings),
     setKey: SettingBoxKey.enableShowDanmaku,
     defaultVal: true,
+  ),
+  const SwitchModel(
+    title: '智能防挡',
+    subtitle: '让弹幕避开画面中的人物（部分视频支持）',
+    leading: Icon(Icons.person_off_outlined),
+    setKey: SettingBoxKey.enableDanmakuMask,
+    defaultVal: false,
   ),
   if (PlatformUtils.isMobile)
     const SwitchModel(
@@ -250,12 +258,28 @@ List<SettingsModel> get playSettings => [
     defaultVal: false,
   ),
   if (PlatformUtils.isMobile)
-    const SwitchModel(
+    SwitchModel(
       title: '后台播放',
       subtitle: '进入后台时继续播放',
-      leading: Icon(Icons.motion_photos_pause_outlined),
+      leading: const Icon(Icons.motion_photos_pause_outlined),
       setKey: SettingBoxKey.continuePlayInBackground,
       defaultVal: false,
+      onChanged: (value) {
+        if (!value) {
+          PlPlayerController.instance?.onAutoAudioOnlySettingChanged();
+        }
+      },
+    ),
+  if (PlatformUtils.isMobile)
+    SwitchModel(
+      title: '后台只听音频（实验性）',
+      subtitle: '需开启「后台播放」后才生效\n进入后台或息屏一段时间后停止视频流，只保留声音；回到前台恢复画面',
+      leading: const Icon(Icons.headphones_outlined),
+      setKey: SettingBoxKey.autoAudioOnlyInBackground,
+      defaultVal: false,
+      onChanged: (value) {
+        PlPlayerController.instance?.onAutoAudioOnlySettingChanged();
+      },
     ),
   const SwitchModel(
     title: '应用内画中画',
@@ -310,6 +334,13 @@ List<SettingsModel> get playSettings => [
     subtitle: '展示同时在看人数',
     leading: Icon(Icons.people_outlined),
     setKey: SettingBoxKey.enableOnlineTotal,
+    defaultVal: false,
+  ),
+  const SwitchModel(
+    title: '弹幕数',
+    subtitle: '展示当前播放视频的具体弹幕数',
+    leading: Icon(CustomIcons.dm_on),
+    setKey: SettingBoxKey.enableDmCount,
     defaultVal: false,
   ),
   NormalModel(

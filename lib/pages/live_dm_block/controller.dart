@@ -8,37 +8,49 @@ import 'package:material_ui/material_ui.dart';
 class LiveDmBlockController extends GetxController
     with GetSingleTickerProviderStateMixin {
   final roomId = Get.parameters['roomId']!;
-  final LiveRoomController? liveRoomController =
-      Get.arguments is LiveRoomController ? Get.arguments : null;
+  LiveRoomController? _controller;
 
   @override
   void onInit() {
     super.onInit();
+    final args = Get.arguments;
+    if (args is LiveRoomController) {
+      _controller = args;
+    }
     tabController = TabController(length: 2, vsync: this);
     queryData();
   }
 
   late final TabController tabController;
 
+  bool _isLoaded = false;
   final RxList<String> keywordList = <String>[].obs;
   final RxList<ShieldUserList> shieldUserList = <ShieldUserList>[].obs;
 
   Future<void> queryData() async {
     final res = await LiveHttp.getLiveInfoByUser(roomId);
     if (res case Success(:final response)) {
-      keywordList.assignAll(response?.keywordList ?? const []);
-      shieldUserList.assignAll(response?.shieldUserList ?? const []);
-      updateLiveRoomRules();
+      _isLoaded = true;
+      if (response == null) return;
+      if (response.keywordList case final list? when list.isNotEmpty) {
+        keywordList.addAll(list);
+      }
+      if (response.shieldUserList case final list? when list.isNotEmpty) {
+        shieldUserList.addAll(list);
+      }
     } else {
       res.toast();
     }
   }
 
-  void updateLiveRoomRules() {
-    liveRoomController?.updateBlockRules(
-      keywordList,
-      shieldUserList.map((e) => e.uid).whereType<int>(),
-    );
+  void _updateLiveRoomRules() {
+    if (_isLoaded && _controller != null) {
+      _controller!.updateBlockRules(
+        keywordList,
+        shieldUserList.map((e) => e.uid).toSet(),
+      );
+    }
+    _controller = null;
   }
 
   Future<void> addShieldKeyword(bool isKeyword, String value) async {
@@ -69,7 +81,7 @@ class LiveDmBlockController extends GetxController
     assert(item is ShieldUserList || item is String);
     if (item is ShieldUserList) {
       final res = await LiveHttp.liveShieldUser(
-        uid: item.uid!,
+        uid: item.uid,
         roomid: roomId,
         type: 0,
       );
@@ -92,7 +104,7 @@ class LiveDmBlockController extends GetxController
 
   @override
   void onClose() {
-    updateLiveRoomRules();
+    _updateLiveRoomRules();
     tabController.dispose();
     super.onClose();
   }

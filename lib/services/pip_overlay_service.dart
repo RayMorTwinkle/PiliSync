@@ -8,6 +8,7 @@ import 'package:PiliPlus/plugin/pl_player/controller.dart';
 import 'package:PiliPlus/plugin/pl_player/models/play_status.dart';
 import 'package:PiliPlus/services/logger.dart';
 import 'package:PiliPlus/services/pip_transition_coordinator.dart';
+import 'package:PiliPlus/services/route_stack_observer.dart';
 import 'package:PiliPlus/services/service_locator.dart';
 import 'package:PiliPlus/utils/device_utils.dart';
 import 'package:PiliPlus/utils/platform_utils.dart';
@@ -93,6 +94,53 @@ class PipOverlayService {
 
   static bool isVideoLikeRoute(String route) {
     return route.startsWith('/video') || route.startsWith('/liveRoom');
+  }
+
+  /// 静默移除 [context] 所在路由正下方连续的视频/直播播放页，返回移除数量。
+  /// 手动进小窗前调用：这些页面若留在栈内，当前页 pop 后会作为新顶层收到
+  /// didPopNext，发现小窗里不是自己的内容而把小窗关掉。removeRoute 只发
+  /// didRemove，RouteObserver 不会据此触发 didPopNext；被移除的页面按普通
+  /// 离栈语义 dispose（下一帧），最终由小窗独占播放器。
+  /// 这里是破坏性删除，用精确路由名而非 isVideoLikeRoute 的前缀匹配：
+  /// /videoWeb（UP 主投稿页）等同前缀的非播放页不能被误删
+  static int removeNestedVideoLikeRoutesBelow(BuildContext context) {
+    final navigator = Get.key.currentState;
+    final current = ModalRoute.of(context);
+    if (navigator == null || current == null) {
+      return 0;
+    }
+    const playerRoutes = {'/videoV', '/liveRoom'};
+    final nested = routeStackObserver.routesBelowWhile(
+      current,
+      (route) => playerRoutes.contains(route.settings.name),
+    );
+    for (final route in nested) {
+      navigator.removeRoute(route);
+    }
+    if (kDebugMode && nested.isNotEmpty) {
+      debugPrint('[PiP] Removed ${nested.length} nested video/live routes');
+    }
+    return nested.length;
+  }
+
+  /// 等待布局落定：[isReady] 成立即返回，超时则不再等。
+  /// 退出全屏后设备转屏由 OS 异步完成，MediaQuery（isPortrait/尺寸）要再过
+  /// 若干帧才更新；此时立即判定可 pop 状态或量取源矩形会拿到全屏时的旧值。
+  /// 超时后由调用方按当前状态决定（该拒绝就拒绝）
+  ///
+  /// 用时间而非帧数设限：转屏耗时与显示刷新率无关，高刷屏上同样的帧数
+  /// 只有几分之一的时间，按帧计会提前放弃
+  static Future<void> awaitLayoutSettled(
+    bool Function() isReady, {
+    Duration timeout = const Duration(milliseconds: 600),
+  }) async {
+    // 至少等一帧：退出全屏的状态变更在下一帧才重新布局，此刻量取的矩形
+    // 仍是全屏几何；即使 isReady 立刻为真也要让这一帧过去
+    await WidgetsBinding.instance.endOfFrame;
+    final stopwatch = Stopwatch()..start();
+    while (!isReady() && stopwatch.elapsed < timeout) {
+      await WidgetsBinding.instance.endOfFrame;
+    }
   }
 
   static void _setEnteringPipFlag(dynamic controller, bool value) {
@@ -674,35 +722,20 @@ class _PipWidgetState extends State<PipWidget>
   void didChangeMetrics() {
     // 屏幕旋转 / 桌面窗口尺寸变化：触发重建，让 build 按新尺寸把小窗位置
     // 钳回界内。仅重建、不改 _left/_top 意图值，窗口恢复时能自动回原位。
+    // 系统 PiP 期间尺寸变化来自 PiP 窗口本身，build 会整段跳过几何计算。
     if (mounted) setState(() {});
   }
 
   @override
   Widget build(BuildContext context) {
-    final screenSize = MediaQuery.of(context).size;
-    // 按当前窗口短边分档:手机维持现状,平板/桌面放大
-    _baseLong = PipWindowMemory.basePipLong(screenSize);
-    _baseShort = PipWindowMemory.basePipShort(screenSize);
-    // 旋转/窗口尺寸变化后按新屏幕重新钳制 scale:竖屏屏拉大后转横屏时
-    // 上限变小,超出即自动缩小;同时回写会话记忆,恢复时保持缩小后的值
-    _scale = PipWindowMemory.clampScaleContinuous(
-      _scale,
-      screenSize,
-      isVertical: PipOverlayService.isVertical,
-    );
-    PipWindowMemory.scale = _scale;
-    _left ??= (PipWindowMemory.position?.dx ?? screenSize.width - _width - 16)
-        .clamp(0.0, max(0.0, screenSize.width - _width))
-        .toDouble();
-    _top ??= (PipWindowMemory.position?.dy ?? screenSize.height - _height - 100)
-        .clamp(0.0, max(0.0, screenSize.height - _height))
-        .toDouble();
-
     return Obx(() {
+      final screenSize = MediaQuery.of(context).size;
       final bool isNative = PipOverlayService.isNativePip;
 
-      // 系统 PiP 模式下，直接铺满窗口，不执行任何自定义尺寸或位置计算；
-      // 收起/归位动画同时让位（相位仍由协调器推进，回到应用内后自然衔接）
+      // 系统 PiP 模式下直接铺满窗口，且不执行任何自定义尺寸/位置计算：此时
+      // MediaQuery 给出的是系统 PiP 窗口自身的尺寸（非整屏），若照常钳制会把
+      // 缩放下限强加给小窗并写回会话记忆，退出 PiP 后小窗就永久停在最小档。
+      // 收起/归位动画同时让位（相位仍由协调器推进，回到应用内后自然衔接）。
       if (isNative) {
         return Positioned.fill(
           child: ColoredBox(
@@ -717,6 +750,24 @@ class _PipWidgetState extends State<PipWidget>
           ),
         );
       }
+
+      // 按当前窗口短边分档:手机维持现状,平板/桌面放大
+      _baseLong = PipWindowMemory.basePipLong(screenSize);
+      _baseShort = PipWindowMemory.basePipShort(screenSize);
+      // 旋转/窗口尺寸变化后按新屏幕重新钳制 scale:竖屏屏拉大后转横屏时
+      // 上限变小,超出即自动缩小;同时回写会话记忆,恢复时保持缩小后的值
+      _scale = PipWindowMemory.clampScaleContinuous(
+        _scale,
+        screenSize,
+        isVertical: PipOverlayService.isVertical,
+      );
+      PipWindowMemory.scale = _scale;
+      _left ??= (PipWindowMemory.position?.dx ?? screenSize.width - _width - 16)
+          .clamp(0.0, max(0.0, screenSize.width - _width))
+          .toDouble();
+      _top ??= (PipWindowMemory.position?.dy ?? screenSize.height - _height - 100)
+          .clamp(0.0, max(0.0, screenSize.height - _height))
+          .toDouble();
 
       return AnimatedBuilder(
         animation: Listenable.merge([_phaseCtr, _closeCtr, _transition]),
@@ -790,40 +841,7 @@ class _PipWidgetState extends State<PipWidget>
                     if (_showControls) _startHideTimer();
                   }
                 },
-                child: GestureDetector(
-                  onTap: _onTap,
-                  onDoubleTap: _onDoubleTap,
-                  // 单指拖动 + 双指捏合缩放统一走 onScale(两者互斥于 onPan)
-                  onScaleStart: (_) {
-                    _hideTimer?.cancel();
-                    _scaleStart = _scale;
-                    _instantResize = true;
-                  },
-                  onScaleUpdate: (details) {
-                    setState(() {
-                      // 平移:单指拖动 / 双指整体移动(focalPointDelta)
-                      _left = _left! + details.focalPointDelta.dx;
-                      _top = _top! + details.focalPointDelta.dy;
-                      // 缩放:双指时 scale≠1;单指恒为 1,仅钳位置
-                      if (details.scale != 1.0) {
-                        _applyScaleAroundCenter(
-                          _scaleStart * details.scale,
-                          screenSize,
-                        );
-                      } else {
-                        _clampPositionInScreen(screenSize);
-                      }
-                    });
-                    PipWindowMemory.position = Offset(_left!, _top!);
-                    PipWindowMemory.scale = _scale;
-                  },
-                  onScaleEnd: (_) {
-                    setState(() => _instantResize = false);
-                    if (_showControls) {
-                      _startHideTimer();
-                    }
-                  },
-                  child: MouseRegion(
+                child: MouseRegion(
                     onEnter: _onHoverEnter,
                     onExit: _onHoverExit,
                     child: FadeTransition(
@@ -861,19 +879,57 @@ class _PipWidgetState extends State<PipWidget>
                             child: Stack(
                               children: [
                                 Positioned.fill(
-                                  child: AbsorbPointer(
-                                    child: widget.videoPlayerBuilder(
-                                      false,
-                                      rect.width,
-                                      rect.height,
+                                  child: GestureDetector(
+                                    behavior: HitTestBehavior.opaque,
+                                    onTap: _onTap,
+                                    onDoubleTap: _onDoubleTap,
+                                    // 仅视频区域处理小窗移动/缩放，避免与控制按钮竞争手势。
+                                    onScaleStart: (_) {
+                                      _hideTimer?.cancel();
+                                      _scaleStart = _scale;
+                                      _instantResize = true;
+                                    },
+                                    onScaleUpdate: (details) {
+                                      setState(() {
+                                        // 平移:单指拖动 / 双指整体移动(focalPointDelta)
+                                        _left = _left! + details.focalPointDelta.dx;
+                                        _top = _top! + details.focalPointDelta.dy;
+                                        // 缩放:双指时 scale≠1;单指恒为 1,仅钳位置
+                                        if (details.scale != 1.0) {
+                                          _applyScaleAroundCenter(
+                                            _scaleStart * details.scale,
+                                            screenSize,
+                                          );
+                                        } else {
+                                          _clampPositionInScreen(screenSize);
+                                        }
+                                      });
+                                      PipWindowMemory.position =
+                                          Offset(_left!, _top!);
+                                      PipWindowMemory.scale = _scale;
+                                    },
+                                    onScaleEnd: (_) {
+                                      setState(() => _instantResize = false);
+                                      if (_showControls) {
+                                        _startHideTimer();
+                                      }
+                                    },
+                                    child: AbsorbPointer(
+                                      child: widget.videoPlayerBuilder(
+                                        false,
+                                        rect.width,
+                                        rect.height,
+                                      ),
                                     ),
                                   ),
                                 ),
                                 if (interactive && _showControls) ...[
                                   Positioned.fill(
-                                    child: Container(
-                                      color: Colors.black.withValues(
-                                        alpha: 0.4,
+                                    child: IgnorePointer(
+                                      child: Container(
+                                        color: Colors.black.withValues(
+                                          alpha: 0.4,
+                                        ),
                                       ),
                                     ),
                                   ),
@@ -970,9 +1026,7 @@ class _PipWidgetState extends State<PipWidget>
                                                   controller
                                                       ?.plPlayerController;
                                               final isPlaying =
-                                                  plController
-                                                          ?.playerStatus
-                                                          .value ==
+                                                  plController?.playerStatus ==
                                                       PlayerStatus.playing;
                                               return PipControlButton(
                                                 targetSize: bottomControl,
@@ -1043,7 +1097,6 @@ class _PipWidgetState extends State<PipWidget>
                       ),
                     ),
                   ),
-                ),
               ),
             ),
           );

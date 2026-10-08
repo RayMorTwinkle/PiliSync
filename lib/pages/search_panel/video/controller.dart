@@ -1,7 +1,6 @@
 import 'dart:math';
 
 import 'package:PiliPlus/http/loading_state.dart';
-import 'package:PiliPlus/models/common/search/search_type.dart';
 import 'package:PiliPlus/models/common/search/video_search_type.dart';
 import 'package:PiliPlus/models/search/result.dart';
 import 'package:PiliPlus/pages/search/widgets/search_text.dart';
@@ -16,6 +15,62 @@ import 'package:flutter_smart_dialog/flutter_smart_dialog.dart';
 import 'package:get/get.dart';
 import 'package:material_ui/material_ui.dart';
 
+final _b23Regex = RegExp(r'b23\.tv/[A-Za-z0-9]{7}$', caseSensitive: false);
+
+mixin SearchVideoMixin on SearchVideoController {
+  late bool _hasJump2Video = false;
+
+  @override
+  void onInit() {
+    super.onInit();
+    _jump2Video();
+  }
+
+  @override
+  bool customHandleResponse(bool isRefresh, Success<SearchVideoData> response) {
+    if (isRefresh && !_hasJump2Video) {
+      _hasJump2Video = true;
+      _onPushDetail(response.response.list);
+    }
+    return super.customHandleResponse(isRefresh, response);
+  }
+
+  void _onPushDetail(List<SearchVideoItemModel>? resultList) {
+    try {
+      final aid = int.tryParse(keyword);
+      if (aid != null && resultList?.firstOrNull?.aid == aid) {
+        PiliScheme.videoPush(aid, null, showDialog: false);
+      }
+    } catch (_) {}
+  }
+
+  Future<void> _jump2Video() async {
+    if (IdUtils.avRegexExact.hasMatch(keyword)) {
+      _hasJump2Video = true;
+      PiliScheme.videoPush(
+        int.parse(keyword.substring(2)),
+        null,
+        showDialog: false,
+      );
+    } else if (IdUtils.bvRegexExact.hasMatch(keyword)) {
+      _hasJump2Video = true;
+      PiliScheme.videoPush(null, keyword, showDialog: false);
+    } else if (_b23Regex.hasMatch(keyword)) {
+      _hasJump2Video = true;
+      final redirectUrl = await UrlUtils.parseRedirectUrl(keyword);
+      if (redirectUrl != null) {
+        final matchRes = IdUtils.matchAvorBv(input: redirectUrl);
+        final aid = matchRes.av;
+        String? bvid = matchRes.bv;
+        if (aid != null || bvid != null) {
+          bvid ??= IdUtils.av2bv(aid!);
+          PiliScheme.videoPush(aid, bvid, showDialog: false);
+        }
+      }
+    }
+  }
+}
+
 class SearchVideoController
     extends SearchPanelController<SearchVideoData, SearchVideoItemModel> {
   SearchVideoController({
@@ -24,18 +79,14 @@ class SearchVideoController
     required super.tag,
   });
 
-  late bool hasJump2Video = false;
-
   @override
   void onInit() {
     super.onInit();
-    videoDurationType = VideoDurationType.all;
-    videoZoneType = VideoZoneType.all;
+    videoDurationType = .all;
+    videoZoneType = .all;
     DateTime now = DateTime.now();
     pubBeginDate = DateTime(now.year, now.month, 1, 0, 0, 0);
     pubEndDate = DateTime(now.year, now.month, now.day, 23, 59, 59);
-
-    jump2Video();
   }
 
   @override
@@ -95,6 +146,7 @@ class SearchVideoController
         }
       }
     }
+    return super.customHandleResponse(isRefresh, response);
   }
 
   final Rx<ArchiveFilterType> selectedType = ArchiveFilterType.totalrank.obs;

@@ -21,6 +21,7 @@ import 'package:PiliPlus/pages/video/reply/controller.dart';
 import 'package:PiliPlus/plugin/pl_player/models/play_repeat.dart';
 import 'package:PiliPlus/services/logger.dart';
 import 'package:PiliPlus/services/service_locator.dart';
+import 'package:PiliPlus/utils/android/android_helper.dart';
 import 'package:PiliPlus/utils/feed_back.dart';
 import 'package:PiliPlus/utils/global_data.dart';
 import 'package:PiliPlus/utils/id_utils.dart';
@@ -154,7 +155,20 @@ class PgcIntroController extends CommonIntroController {
             child: const Text('其它app打开', style: TextStyle(fontSize: 14)),
             onPressed: () {
               Get.back();
-              PageUtils.launchURL(videoUrl);
+              PiliAndroidHelper.openUrl(videoUrl);
+            },
+          ),
+          DialogOption(
+            child: const Text('分享视频', style: TextStyle(fontSize: 14)),
+            onPressed: () {
+              final item = pgcItem.episodes?.firstWhereOrNull(
+                (item) => item.epId == epId,
+              );
+              Get.back();
+              ShareUtils.shareText(
+                '${pgcItem.title}${item != null ? ' ${item.showTitle}' : ''}'
+                ' - $videoUrl',
+              );
             },
           ),
           DialogOption(
@@ -389,8 +403,6 @@ class PgcIntroController extends CommonIntroController {
       if (nextIndex >= episodes.length) {
         if (playRepeat == PlayRepeat.listCycle) {
           nextIndex = 0;
-        } else if (playRepeat == PlayRepeat.autoPlayRelated) {
-          return false;
         } else {
           return false;
         }

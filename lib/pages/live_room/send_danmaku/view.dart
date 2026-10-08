@@ -122,7 +122,7 @@ class _ReplyPageState extends CommonRichTextPubPageState<LiveSendDmPanel> {
             mainAxisSize: MainAxisSize.min,
             children: [
               ...buildInputView(theme),
-              Flexible(child: buildPanelContainer(theme, Colors.transparent)),
+              Flexible(child: buildPanelContainer(Colors.transparent)),
             ],
           ),
         ),
@@ -175,8 +175,6 @@ class _ReplyPageState extends CommonRichTextPubPageState<LiveSendDmPanel> {
                 border: InputBorder.none,
                 hintStyle: TextStyle(fontSize: 14),
               ),
-              style: theme.textTheme.bodyLarge,
-              // inputFormatters: [LengthLimitingTextInputFormatter(20)],
             ),
           ),
         ),
