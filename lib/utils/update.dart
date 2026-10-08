@@ -59,17 +59,6 @@ abstract final class Update {
         }
         return;
       }
-      final bool includePreRelease = Pref.preReleaseUpdate;
-      final data = (res.data as List).firstWhere(
-        (e) => includePreRelease || e['prerelease'] != true,
-        orElse: () => null,
-      );
-      if (data == null) {
-        if (!isAuto) {
-          SmartDialog.showToast('已是最新版本');
-        }
-        return;
-      }
       final release = data;
       final int latest =
           DateTime.parse(release['created_at']).millisecondsSinceEpoch ~/

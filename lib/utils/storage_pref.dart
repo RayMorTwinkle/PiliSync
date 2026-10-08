@@ -1029,50 +1029,6 @@ abstract final class Pref {
     return value is String && value.isNotEmpty ? value : null;
   }
 
-  static String? get customFontPath =>
-      _setting.get(SettingBoxKey.customFontPath);
-
-  static String? get customFontFamily {
-    final value = _setting.get(
-      SettingBoxKey.customFontFamily,
-      defaultValue: '',
-    );
-    return value is String && value.isNotEmpty ? value : null;
-  }
-
-  static String? get customFontName {
-    final value = _setting.get(SettingBoxKey.customFontName, defaultValue: '');
-    return value is String && value.isNotEmpty ? value : null;
-  }
-
-  static DanmakuFontSyncMode get danmakuFontSyncMode =>
-      DanmakuFontSyncMode.values[_setting.get(
-        SettingBoxKey.danmakuFontSyncMode,
-        defaultValue: DanmakuFontSyncMode.global.index,
-      )];
-
-  static bool get enableCustomDanmakuFont =>
-      _setting.get(SettingBoxKey.enableCustomDanmakuFont, defaultValue: false);
-
-  static String? get customDanmakuFontPath =>
-      _setting.get(SettingBoxKey.customDanmakuFontPath);
-
-  static String? get customDanmakuFontFamily {
-    final value = _setting.get(
-      SettingBoxKey.customDanmakuFontFamily,
-      defaultValue: '',
-    );
-    return value is String && value.isNotEmpty ? value : null;
-  }
-
-  static String? get customDanmakuFontName {
-    final value = _setting.get(
-      SettingBoxKey.customDanmakuFontName,
-      defaultValue: '',
-    );
-    return value is String && value.isNotEmpty ? value : null;
-  }
-
   static bool get enableDragSubtitle =>
       _setting.get(SettingBoxKey.enableDragSubtitle, defaultValue: false);
 

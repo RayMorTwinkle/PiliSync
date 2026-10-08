@@ -51,6 +51,10 @@ import 'package:flutter_smart_dialog/flutter_smart_dialog.dart';
 import 'package:get/get.dart';
 import 'package:material_ui/material_ui.dart';
 
+const int _kMaxChatCount = 500;
+const int _kTrimCount = _kMaxChatCount + 50;
+const int _kSafeTrimIndex = 200;
+
 class LiveRoomController extends GetxController {
   LiveRoomController(this.heroTag, {this.fromPip = false});
   final String heroTag;
@@ -638,26 +642,23 @@ class LiveRoomController extends GetxController {
   }
 
   void startLiveMsg() {
-    _blockRulesFuture ??= fetchBlockRules();
-    _blockRulesFuture!.then((_) {
-      if (messages.isEmpty) {
-        prefetch();
-        if (showSuperChat) {
-          getSuperChatMsg();
-        }
+    if (messages.isEmpty) {
+      prefetch();
+      if (showSuperChat) {
+        getSuperChatMsg();
       }
-      if (_msgStream != null) {
-        return;
+    }
+    if (_msgStream != null) {
+      return;
+    }
+    if (dmInfo != null) {
+      initDm(dmInfo!);
+      return;
+    }
+    LiveHttp.liveRoomGetDanmakuToken(roomId: roomId).then((res) {
+      if (res case Success(:final response)) {
+        initDm(dmInfo = response);
       }
-      if (dmInfo != null) {
-        initDm(dmInfo!);
-        return;
-      }
-      LiveHttp.liveRoomGetDanmakuToken(roomId: roomId).then((res) {
-        if (res case Success(:final response)) {
-          initDm(dmInfo = response);
-        }
-      });
     });
   }
 

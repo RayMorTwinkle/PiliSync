@@ -86,34 +86,7 @@ class PlDanmakuController {
     skipBottom: Pref.mergeDanmakuSkipBottom,
   );
 
-  static const int segmentLength = 60 * 6 * 1000;
-  static const int _maxConcurrentDownloads = 2;
-  static const int _prefetchRetryCooldownMs = 5000;
-  static const int _prefetchLeadMs = 30000;
-  static const int _maxPrefetchFailures = 5;
-
-  // Default font size for standard danmaku (base before user scaling)
-  // This matches the base size used in view.dart: 15 * scale
-  static const int _defaultFontSize = 15;
-  late final DanmakuMergeWorkerClient _mergeWorker = DanmakuMergeWorkerClient(
-    dictionaryLoader: rootBundle.loadString,
-  );
-
-  int get _mergeWindowMs => Pref.mergeDanmakuWindowSeconds * 1000;
-
-  DanmakuMergeConfig get _mergeConfig => DanmakuMergeConfig(
-    enabled: _mergeDanmaku,
-    windowMs: _mergeWindowMs,
-    maxDistance: Pref.mergeDanmakuMaxDistance,
-    maxCosine: Pref.mergeDanmakuMaxCosine,
-    representativePercent: Pref.mergeDanmakuRepresentativePercent,
-    usePinyin: Pref.mergeDanmakuUsePinyin,
-    crossMode: Pref.mergeDanmakuCrossMode,
-    skipSubtitle: Pref.mergeDanmakuSkipSubtitle,
-    skipAdvanced: Pref.mergeDanmakuSkipAdvanced,
-    skipBottom: Pref.mergeDanmakuSkipBottom,
-  );
-  void dispose() {
+    void dispose() {
     if (kDebugMode) {
       debugPrint(
         '[PlDanmakuController] dispose instance=${identityHashCode(this)} '

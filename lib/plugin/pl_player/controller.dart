@@ -85,6 +85,7 @@ class PlPlayerController with BlockConfigMixin {
 
   final Rx<PlayerStatus> _playerStatus = Rx(.paused);
   PlayerStatus get playerStatus => _playerStatus.value;
+  Stream<PlayerStatus> get playerStatusStream => _playerStatus.stream;
   set playerStatus(PlayerStatus value) => _playerStatus.value = value;
 
   /// Commands, not status changes. Sync callers opt out per invocation; other
@@ -607,7 +608,7 @@ class PlPlayerController with BlockConfigMixin {
     bool isInterrupt = false,
   }) {
     if (_instance?.playerStatus.isPlaying ?? false) {
-      await _instance?.pause(notify: notify, isInterrupt: isInterrupt);
+      return _instance?.pause(notify: notify, isInterrupt: isInterrupt);
     } else {
       // Preserve the no-op engine path, but do not lose an explicit pause.
       _instance?._playbackRequests.add((
@@ -1504,10 +1505,9 @@ class PlPlayerController with BlockConfigMixin {
       final completer = Completer<void>();
       _subForSeek?.cancel();
       _subForSeek = duration.listen((_) {
-        seek(position, isSeek: isSeek);
         _cancelSubForSeek();
         unawaited(
-          seek().whenComplete(() {
+          seek(position, isSeek: isSeek).whenComplete(() {
             if (!completer.isCompleted) completer.complete();
           }),
         );

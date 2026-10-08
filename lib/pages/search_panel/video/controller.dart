@@ -96,55 +96,11 @@ class SearchVideoController
 
   @override
   bool customHandleResponse(bool isRefresh, Success<SearchVideoData> response) {
-    searchResultController?.count[searchType.index] =
-        response.response.numResults ?? 0;
     final list = response.response.list;
     if (list != null) {
       list.removeWhere(
         (item) => RecommendFilter.searchShouldRemove(item.owner.mid, item.title),
       );
-    }
-    if (searchType == SearchType.video && !hasJump2Video && isRefresh) {
-      hasJump2Video = true;
-      onPushDetail(list);
-    }
-    return false;
-  }
-
-  void onPushDetail(List<SearchVideoItemModel>? resultList) {
-    try {
-      int? aid = int.tryParse(keyword);
-      if (aid != null && resultList?.firstOrNull?.aid == aid) {
-        PiliScheme.videoPush(aid, null, showDialog: false);
-      }
-    } catch (_) {}
-  }
-
-  static final _b23Regex = RegExp(r'b23\.tv/[A-Za-z0-9]{7}$', caseSensitive: false);
-
-  Future<void> jump2Video() async {
-    if (IdUtils.avRegexExact.hasMatch(keyword)) {
-      hasJump2Video = true;
-      PiliScheme.videoPush(
-        int.parse(keyword.substring(2)),
-        null,
-        showDialog: false,
-      );
-    } else if (IdUtils.bvRegexExact.hasMatch(keyword)) {
-      hasJump2Video = true;
-      PiliScheme.videoPush(null, keyword, showDialog: false);
-    } else if (_b23Regex.hasMatch(keyword)) {
-      hasJump2Video = true;
-      final redirectUrl = await UrlUtils.parseRedirectUrl(keyword);
-      if (redirectUrl != null) {
-        final matchRes = IdUtils.matchAvorBv(input: redirectUrl);
-        final aid = matchRes.av;
-        String? bvid = matchRes.bv;
-        if (aid != null || bvid != null) {
-          bvid ??= IdUtils.av2bv(aid!);
-          PiliScheme.videoPush(aid, bvid, showDialog: false);
-        }
-      }
     }
     return super.customHandleResponse(isRefresh, response);
   }

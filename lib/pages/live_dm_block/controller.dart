@@ -43,14 +43,13 @@ class LiveDmBlockController extends GetxController
     }
   }
 
-  void _updateLiveRoomRules() {
+  void updateLiveRoomRules() {
     if (_isLoaded && _controller != null) {
       _controller!.updateBlockRules(
         keywordList,
         shieldUserList.map((e) => e.uid).toSet(),
       );
     }
-    _controller = null;
   }
 
   Future<void> addShieldKeyword(bool isKeyword, String value) async {
@@ -104,7 +103,7 @@ class LiveDmBlockController extends GetxController
 
   @override
   void onClose() {
-    _updateLiveRoomRules();
+    updateLiveRoomRules();
     tabController.dispose();
     super.onClose();
   }

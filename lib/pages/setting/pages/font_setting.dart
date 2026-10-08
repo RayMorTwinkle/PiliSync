@@ -43,20 +43,6 @@ class _FontSettingPageState extends State<FontSettingPage> {
   // ignore: deprecated_member_use
   static final _normalFontWeight = FontWeight.normal.index;
 
-  /// 预览区在未选字体时使用的平台默认字体族
-  ///
-  /// ref [Typography._withPlatform]
-  static final String? _kDefaultFontFamily = (switch (defaultTargetPlatform) {
-    .iOS => Typography.whiteCupertino,
-    .android || .fuchsia => Typography.whiteMountainView,
-    .windows => Typography.whiteRedmond,
-    .macOS => Typography.whiteRedwoodCity,
-    .linux => Typography.whiteHelsinki,
-  }).bodyMedium?.fontFamily;
-
-  // ignore: deprecated_member_use
-  static final _normalFontWeight = FontWeight.normal.index;
-
   String? _selectedFont = Pref.appFont;
   // ignore: deprecated_member_use
   int _selectedWeight = Pref.appFontWeight.index;

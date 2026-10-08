@@ -4,7 +4,6 @@ import 'package:PiliPlus/services/watch_together/wt_player_port.dart';
 export 'package:PiliPlus/services/watch_together/wt_player_port.dart';
 
 import 'package:PiliPlus/plugin/pl_player/controller.dart';
-import 'package:PiliPlus/plugin/pl_player/models/play_status.dart';
 
 /// Optional command source, independent of playback status notifications.
 /// [isInterrupt] marks system-level pauses (audio focus loss, phone call)
@@ -78,7 +77,7 @@ class PlPlayerAdapter implements WtPlayerAdapter, WtPlaybackCommandSource {
     if (p == null) {
       return const Stream<void>.empty().listen(null);
     }
-    return p.playerStatus.listen((status) => cb(status.isPlaying));
+    return p.playerStatusStream.listen((status) => cb(status.isPlaying));
   }
 
   @override

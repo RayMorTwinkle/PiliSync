@@ -1,3 +1,4 @@
+import 'package:PiliPlus/common/widgets/flutter/live_list_view.dart';
 import 'package:PiliPlus/common/widgets/flutter/popup_menu.dart';
 import 'package:PiliPlus/common/widgets/gesture/tap_gesture_recognizer.dart';
 import 'package:PiliPlus/common/widgets/image/network_img_layer.dart';
@@ -45,7 +46,7 @@ class LiveRoomChatPanel extends StatelessWidget {
     return Stack(
       children: [
         Obx(
-          () => ListView.separated(
+          () => LiveListView.separated(
             key: const PageStorageKey(LiveRoomChatPanel),
             // multiply by 2 to account for separators
             initialIndex: liveRoomController.trimDmIndex * 2,
@@ -56,6 +57,7 @@ class LiveRoomChatPanel extends StatelessWidget {
                 liveRoomController.messages.length,
             physics: platformClampingPhysics,
             itemBuilder: (_, index) {
+              liveRoomController.chatSimpleIndex = index;
               final item = liveRoomController.messages[index];
               if (item is DanmakuMsg) {
                 WidgetSpan? medal;
@@ -134,7 +136,7 @@ class LiveRoomChatPanel extends StatelessWidget {
                   onReport: () => liveRoomController.reportSC(item),
                 );
               }
-              throw item.runtimeType;
+              return null;
             },
           ),
         ),

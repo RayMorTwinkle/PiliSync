@@ -211,14 +211,6 @@ abstract final class SettingBoxKey {
       aiAutoScroll = 'aiAutoScroll',
       aiReasoningEffort = 'aiReasoningEffort';
 
-  static const String enableAiChat = 'enableAiChat',
-      aiApiUrl = 'aiApiUrl',
-      aiApiKey = 'aiApiKey',
-      aiModel = 'aiModel',
-      aiModelListCache = 'aiModelListCache',
-      aiModelListCacheTime = 'aiModelListCacheTime',
-      aiPromptTemplates = 'aiPromptTemplates';
-
   static const String minimizeOnExit = 'minimizeOnExit',
       windowSize = 'windowSize',
       windowPosition = 'windowPosition',
