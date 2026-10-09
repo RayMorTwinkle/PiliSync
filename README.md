@@ -93,7 +93,8 @@ flutter build apk --release --split-per-abi        # Android（默认打包渠�
 # flutter build macos --release / flutter build windows --release / flutter build linux --release
 ```
 
-> **环境要求**：Flutter **3.47.2**（`.fvmrc` 已锁定）、Dart SDK `>=3.13.0`。
+> **环境要求**：Flutter **3.47.5**（`.fvmrc` 已锁定）、Dart SDK `>=3.13.0`。
+> **⚠️ 构建前必读**：本 fork 无法直接用原版 Flutter 编译——必须先按 [docs/build.md](docs/build.md) 给 Flutter SDK 与 pub 缓存打补丁（含 iOS 模拟器 gt3 坑与 release 打包流程）。
 > 桌面端与语音通话依赖各平台原生配置（macOS 主要走 CocoaPods 嵌入 WebRTC）。
 
 ### 自建信令服务器（可选，进阶）
