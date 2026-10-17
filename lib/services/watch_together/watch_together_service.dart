@@ -147,8 +147,23 @@ class WatchTogetherService {
     debugPrint('WT_DBG $msg');
   }
 
-  String get serverUrl =>
-      GStorage.setting.get('wtServerUrl') as String? ?? 'wss://wt.raymor.top';
+  /// 信令后端默认端点。api.raymor.top/pilisync 由 nginx 去前缀反代到同一
+  /// 后端；wt.raymor.top 是遗产别名，仅作向后兼容。
+  static const String defaultServerUrl = 'wss://api.raymor.top/pilisync';
+
+  String get serverUrl {
+    final stored = GStorage.setting.get('wtServerUrl') as String?;
+    if (stored == null) return defaultServerUrl;
+    // 域名迁移：UI 在每次建房/进房时都会把当前文本写回 wtServerUrl，所以
+    // 存量安装大多已持久化了旧默认值——把旧域的各种写法映射到新端点，
+    // 避免存量设备继续打在遗产域上（自定义的非 wt 地址原样保留）。
+    final normalized = stored
+        .trim()
+        .replaceFirst(RegExp(r'^\w+://', caseSensitive: false), '')
+        .replaceAll(RegExp(r'/+$'), '');
+    if (normalized == 'wt.raymor.top') return defaultServerUrl;
+    return stored;
+  }
 
   /// Loose sync mode: 5s play tolerance instead of 1s, and a member that
   /// falls >5s behind stops holding the room barrier — it releases the

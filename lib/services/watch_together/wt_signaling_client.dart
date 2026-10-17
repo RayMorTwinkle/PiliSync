@@ -36,7 +36,10 @@ class WtSignalingClient {
   double _lastInboundAt = 0;
   static const _inboundTimeoutSeconds = 12.0;
 
-  String serverBase = 'wt.raymor.top';
+  // host[:port][/path-prefix] — endpoints are appended verbatim
+  // (/ws, /ice-servers, /timestamp), so the /pilisync prefix must stay
+  // in the base: nginx strips it before proxying to the Go backend.
+  String serverBase = 'api.raymor.top/pilisync';
   bool _secure = true;
   String? roomName;
   String? password;

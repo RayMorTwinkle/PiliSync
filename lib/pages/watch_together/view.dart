@@ -97,7 +97,7 @@ class _WatchTogetherPageState extends State<WatchTogetherPage> {
           controller: _serverCtrl,
           decoration: const InputDecoration(
             labelText: '信令服务器',
-            hintText: 'wss://wt.raymor.top',
+            hintText: 'wss://api.raymor.top/pilisync',
             border: OutlineInputBorder(),
           ),
         ),

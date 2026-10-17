@@ -31,7 +31,11 @@ var (
 	axoooURL       = strings.TrimRight(envOr("AXOOO_URL", "http://10.126.126.1:3005"), "/")
 	axoooKey       = os.Getenv("AXOOO_KEY")
 	publishSecret  = os.Getenv("PUBLISH_SECRET")
-	updatePubBase  = strings.TrimRight(envOr("PUBLIC_BASE", "https://wt.raymor.top"), "/")
+	// PUBLIC_BASE 是写进 latest.json 的 browser_download_url 前缀。公网入口
+	// 已迁到 api.raymor.top/pilisync（nginx 去 /pilisync/ 前缀反代到本服务，
+	// 所以这里的 base 必须保留 /pilisync）；wt.raymor.top 为遗产别名，
+	// 旧 latest.json 里已生成的 wt 链接仍然有效。
+	updatePubBase  = strings.TrimRight(envOr("PUBLIC_BASE", "https://api.raymor.top/pilisync"), "/")
 	latestFilePath = filepath.Join(updateDataDir, "latest.json")
 	latestMu       sync.Mutex
 )

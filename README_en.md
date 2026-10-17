@@ -57,7 +57,7 @@ On top of everything in [PiliNara](https://github.com/Starfallan/PiliNara) / [Pi
 
 **Also added in this repo**
 
-- 📦 **Domestic update channel**: the update dialog defaults to `wt.raymor.top/update/latest`, with GitHub Releases as a fallback
+- 📦 **Domestic update channel**: the update dialog defaults to `api.raymor.top/pilisync/update/latest`, with GitHub Releases as a fallback
 - 📊 **Optional telemetry**: one ping per launch (toggle at the bottom of settings) counting only device ID / version / Watch Together count and duration
 
 ---
@@ -107,7 +107,7 @@ go build -o signaling-server .        # Go 1.21+, only external dep is gorilla/w
 docker build -t pilisync-signaling signaling/
 ```
 
-The client's Watch Together page accepts a custom server address (default `wss://wt.raymor.top`).
+The client's Watch Together page accepts a custom server address (default `wss://api.raymor.top/pilisync`; the old `wt.raymor.top` domain remains a legacy alias for the same backend).
 
 ---
 
@@ -117,7 +117,7 @@ The client's Watch Together page accepts a custom server address (default `wss:/
 
 ```text
 1. "Mine" page top-right icon -> Watch Together (or the settings entry)
-2. Fill the server address (default wss://wt.raymor.top) -> "Create room"
+2. Fill the server address (default wss://api.raymor.top/pilisync) -> "Create room"
 3. Send the room code to a friend (optional password)
 4. Open any video as usual — your playback state is broadcast and members follow
 5. Tap "Voice" to start a call; a buffering member triggers the all-hands wait
@@ -135,7 +135,7 @@ The client's Watch Together page accepts a custom server address (default `wss:/
 
 | Setting | Storage key | Meaning |
 |---|---|---|
-| Server URL | `wtServerUrl` | Default `wss://wt.raymor.top` |
+| Server URL | `wtServerUrl` | Default `wss://api.raymor.top/pilisync` |
 | Update channel | `updateChannel` | Domestic or GitHub (defaults to the domestic channel) |
 | Loose mode | `wtLooseSync` | Rate-limited catch-up, widened to a 5s tolerance |
 | Host priority | `wtHostPriority` | A member's state never moves the host player |
@@ -355,7 +355,7 @@ PiliSync/
 
 **TURN brokering.** The long-lived TURN key stays server-side only: `GET /ice-servers` exchanges it for a **short-lived ICE credential** and hands that to the client, which never sees the token. Without it the server falls back to STUN-only; on upstream failure it serves the cache, then degrades.
 
-**Telemetry boundary.** Each launch does `POST https://wt.raymor.top/telemetry/ping`, collecting only `device_id / version / build_time / mid / uname / open_count / wt_count / wt_secs`; IP and region are derived server-side. Toggleable at the bottom of settings.
+**Telemetry boundary.** Each launch does `POST https://api.raymor.top/pilisync/telemetry/ping`, collecting only `device_id / version / build_time / mid / uname / open_count / wt_count / wt_secs`; IP and region are derived server-side. Toggleable at the bottom of settings.
 
 **Debug control plane.** `wt_debug_server.dart` listens on **loopback :9911** under **kDebugMode**, letting an external test driver create rooms / navigate / read state; it is compiled out of release builds.
 
@@ -375,7 +375,7 @@ A: Voice tries WebRTC peer-to-peer first; symmetric NAT depends on the TURN rela
 A: That's the buffering barrier working: the slow side makes everyone pause and wait. Enable "loose mode" to widen to 5s and rate-limit catch-up so a slow network isn't repeatedly flushed.
 
 **Q: Why does the update dialog default to a non-GitHub URL?**
-A: `api.github.com` is unreliable from mainland China; `wt.raymor.top/update/latest` is served from object-storage direct links, with GitHub Releases as the fallback.
+A: `api.github.com` is unreliable from mainland China; `api.raymor.top/pilisync/update/latest` is served from object-storage direct links, with GitHub Releases as the fallback.
 
 **Q: Does it report data secretly?**
 A: Telemetry is **optional** and only sends aggregate counters (see "Technical notes · Telemetry boundary"); chat content and video info are never sent.
@@ -416,7 +416,7 @@ In one line: **PiliSync = PiliNara + Watch Together (with its own signaling/voic
 | Version line | `2.1.6+1` (upstream mainline, Flutter 3.47.7) | **`2.9.3`** (fork's own release line, Flutter 3.47.5) |
 | Server | none (client only) | **New `signaling/` Go server**: Watch Together signaling + update channel + telemetry + landing page |
 | Sync playback | none | **Room-based sync + WebRTC voice** (aligned with VideoTogether semantics) |
-| Update channel | GitHub Releases | **Domestic direct** `wt.raymor.top/update/latest` + an in-settings channel toggle (`updateChannel`), GitHub as fallback |
+| Update channel | GitHub Releases | **Domestic direct** `api.raymor.top/pilisync/update/latest` + an in-settings channel toggle (`updateChannel`), GitHub as fallback |
 | Telemetry | none | **Optional** startup ping (toggleable) |
 | Build/deploy | mostly Android | one-tag mac/win_x64 releases, Dockerized signaling, domestic publish pipeline |
 | Docs | README | bilingual showcase README + `signaling/README.md` protocol reference + `docs/build.md` build guide |

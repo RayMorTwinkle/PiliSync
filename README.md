@@ -57,7 +57,7 @@
 
 **本仓库另加**
 
-- 📦 **国内更新渠道**：更新弹窗默认走 `wt.raymor.top/update/latest`，GitHub Releases 降为备选
+- 📦 **国内更新渠道**：更新弹窗默认走 `api.raymor.top/pilisync/update/latest`，GitHub Releases 降为备选
 - 📊 **可选遥测**：启动一次 ping（可在设置底部关闭），只统计设备 ID / 版本 / 一起看次数与时长
 
 ---
@@ -107,7 +107,7 @@ go build -o signaling-server .        # Go 1.21+，唯一外部依赖 gorilla/we
 docker build -t pilisync-signaling signaling/
 ```
 
-客户端「一起看」页可填自定义服务器地址（默认 `wss://wt.raymor.top`）。
+客户端「一起看」页可填自定义服务器地址（默认 `wss://api.raymor.top/pilisync`；旧域名 `wt.raymor.top` 为遗产别名，指向同一后端）。
 
 ---
 
@@ -117,7 +117,7 @@ docker build -t pilisync-signaling signaling/
 
 ```text
 1. 「我的」页右上角 → 一起看（或设置页入口）
-2. 填服务器地址（默认 wss://wt.raymor.top）→「创建房间」
+2. 填服务器地址（默认 wss://api.raymor.top/pilisync）→「创建房间」
 3. 把房间号发给好友（可设密码）
 4. 正常打开任意视频 —— 你的播放态会被广播，成员自动跟随
 5. 点「语音」发起通话；缓冲慢的成员会触发全员互等
@@ -135,7 +135,7 @@ docker build -t pilisync-signaling signaling/
 
 | 设置 | 存储键 | 说明 |
 |---|---|---|
-| 服务器地址 | `wtServerUrl` | 默认 `wss://wt.raymor.top` |
+| 服务器地址 | `wtServerUrl` | 默认 `wss://api.raymor.top/pilisync` |
 | 更新渠道 | `updateChannel` | 国内 / GitHub 可选（默认国内渠道）|
 | 宽松模式 | `wtLooseSync` | 追不上时限流补帧、放宽到 5s 阈值 |
 | 房主优先 | `wtHostPriority` | 成员状态永不拖动房主播放器 |
@@ -358,7 +358,7 @@ PiliSync/
 
 **TURN 代取。** TURN 长效密钥只放服务端：`GET /ice-servers` 由服务端向 Cloudflare 换取**短期 ICE 凭据**再下发，客户端永远拿不到 token；未配置时回退 STUN-only，上游失败先吃缓存再降级。
 
-**遥测边界。** 每次启动 `POST https://wt.raymor.top/telemetry/ping`，只收集 `device_id / version / build_time / mid / uname / open_count / wt_count / wt_secs`，IP 与属地由服务端推导，设置底部可关闭。
+**遥测边界。** 每次启动 `POST https://api.raymor.top/pilisync/telemetry/ping`，只收集 `device_id / version / build_time / mid / uname / open_count / wt_count / wt_secs`，IP 与属地由服务端推导，设置底部可关闭。
 
 **调试控制面。** `wt_debug_server.dart` 在 **kDebugMode** 下监听 **loopback :9911**，供外部测试驱动直接建房/跳转/读状态，release 构建会被编译剔除。
 
@@ -378,7 +378,7 @@ A：语音先走 WebRTC 点对点；对称 NAT 下依赖 TURN 中继。若自建
 A：这是缓冲屏障在起作用：慢的一方会触发全员暂停等待。可开启「宽松模式」放宽到 5s 并限制补帧频率，避免慢网络被反复清空缓冲。
 
 **Q：为什么更新弹窗默认走非 GitHub 的地址？**
-A：国内访问 `api.github.com` 不稳定，`wt.raymor.top/update/latest` 由免费对象存储直链分发，GitHub Releases 作为备选。
+A：国内访问 `api.github.com` 不稳定，`api.raymor.top/pilisync/update/latest` 由免费对象存储直链分发，GitHub Releases 作为备选。
 
 **Q：会不会偷偷上报数据？**
 A：遥测是**可关**的，只上报聚合计数（见「技术细节 · 遥测边界」），不传聊天内容和视频信息。
@@ -419,7 +419,7 @@ A：遥测是**可关**的，只上报聚合计数（见「技术细节 · 遥�
 | 版本线 | `2.1.6+1`（上游主线，Flutter 3.47.7） | **`2.9.3`**（fork 自发版号线，Flutter 3.47.5）|
 | 服务端 | 无（纯客户端） | **新增 `signaling/` Go 服务器**：一起看信令 + 更新渠道 + 遥测 + 官网 |
 | 同步观影 | 无 | **房间制同步 + WebRTC 语音**（对齐 VideoTogether 语义）|
-| 更新渠道 | GitHub Releases | **国内直连** `wt.raymor.top/update/latest` + 设置内渠道切换（`updateChannel`），GitHub 降为备选 |
+| 更新渠道 | GitHub Releases | **国内直连** `api.raymor.top/pilisync/update/latest` + 设置内渠道切换（`updateChannel`），GitHub 降为备选 |
 | 遥测 | 无 | **可选**启动 ping（可关闭）|
 | 构建/部署 | Android 为主 | 补 mac/win_x64 一键 tag 发版、Docker 化信令、国内分发链路 |
 | 文档 | README | 中英双语展示级 README + `signaling/README.md` 协议参考 + `docs/build.md` 构建指南 |

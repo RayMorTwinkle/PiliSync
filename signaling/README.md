@@ -14,6 +14,8 @@ go build -o signaling-server .
 - `GET /stats` — `{"rooms": n, "clients": n, "server_time": t}`
 - `WS /ws` — 信令主通道
 
+公网入口：`https://api.raymor.top/pilisync`（nginx `location /pilisync/` 去前缀反代到本服务，如 `/pilisync/ws` → `/ws`）；客户端默认 `wss://api.raymor.top/pilisync`。官网落地页在 `app.raymor.top/pilisync/`。`wt.raymor.top` 为遗产别名（同一后端），老版本客户端不受影响。
+
 ## TURN（语音通话 NAT 穿透）
 
 API token 属于长效密钥，**只能放服务端**——打进客户端包等于公开。机制：服务端用 `TURN_API_TOKEN` 代取 Cloudflare 的短期 ICE 凭据，`GET /ice-servers` 把凭据下发给客户端；客户端永远看不到 token。

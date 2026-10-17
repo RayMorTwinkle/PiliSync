@@ -4,7 +4,7 @@
 // member and be observed end-to-end.
 //
 // fvm dart run tool/wt_host_driver.dart \
-//   --server=wss://wt.raymor.top --room=123456 \
+//   --server=wss://api.raymor.top/pilisync --room=123456 \
 //   --bvid=BV1GJ411x7h7 --cid=137649199 --title="Never Gonna Give You Up" \
 //   --play-after=5 --duration=120
 //
@@ -32,7 +32,7 @@ Future<void> main(List<String> args) async {
   }
   final room = opt['room'] ??
       (100000 + (DateTime.now().microsecondsSinceEpoch % 900000)).toString();
-  final server = opt['server'] ?? 'wss://wt.raymor.top';
+  final server = opt['server'] ?? 'wss://api.raymor.top/pilisync';
   final playAfter = double.tryParse(opt['play-after'] ?? '5') ?? 5;
   final duration = double.tryParse(opt['duration'] ?? '120') ?? 120;
   final target = opt['bvid'] != null

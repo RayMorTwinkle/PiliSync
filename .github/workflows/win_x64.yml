@@ -86,9 +86,10 @@ jobs:
             "https://api.github.com/repos/${{ github.repository }}/releases/tags/${{ github.event.inputs.tag }}" \
             | jq -r '.body // ""')
           # 直连源站绕开 Cloudflare：CF 免费版 100s 超时，上传+服务端网盘转存会 524。
+          # 域名迁移后用 api 域直连源站（/pilisync/ 前缀由 nginx 去前缀反代到同一后端）。
           # IP 是 SM 源站（ServerX DEVICES/README.md），变更时同步更新。
-          curl -fsSL -X POST --resolve "wt.raymor.top:8443:122.51.139.252" \
-            "https://wt.raymor.top:8443/update/publish" \
+          curl -fsSL -X POST --resolve "api.raymor.top:8443:122.51.139.252" \
+            "https://api.raymor.top:8443/pilisync/update/publish" \
             -H "X-API-Key: ${PUBLISH_SECRET}" \
             -F "platform=windows" \
             -F "name=pilisync-latest.exe" \

@@ -3,7 +3,10 @@ package main
 // Landing page at GET / — PiliSync's public face. Version, changelog and
 // download links are read live from data/latest.json so the page never needs
 // manual updates; GitHub Releases stays as the fallback channel.
-// The app icon is embedded and served at /icon.png.
+// The app icon is embedded and served at /icon.png. The page is reachable
+// both at wt.raymor.top/ (legacy alias) and app.raymor.top/pilisync/ (nginx
+// strips the prefix), so asset references must stay relative — absolute
+// /icon.png would escape the /pilisync/ subpath and 404.
 
 import (
 	_ "embed"
@@ -67,7 +70,7 @@ func serveIndex(w http.ResponseWriter, r *http.Request) {
 <meta name="viewport" content="width=device-width,initial-scale=1">
 <title>PiliSync — 和朋友一起看 B 站</title>
 <meta name="description" content="PiliSync：B 站第三方客户端 PiliPlus 的增强 fork，新增「一起看」——同步进度观影、双人语音通话、房主转让、国内渠道更新。支持 Android / macOS / Windows。">
-<link rel="icon" type="image/png" href="/icon.png">
+<link rel="icon" type="image/png" href="icon.png">
 <style>
 :root{--pink:#fb7299;--green:#43a85f;--ink:#1d1d1f;--sub:#6e6e73;--line:#e8e8ed;
   --bg:#fbfbfd;--card:#fff;--card2:#f5f5f7;color-scheme:light}
@@ -161,14 +164,14 @@ nav{background:rgba(0,0,0,.7)}
 </style></head><body>
 
 <nav><div class="wrap">
-<img src="/icon.png" alt="PiliSync"><span class="name">PiliSync</span><span class="sp"></span>
+<img src="icon.png" alt="PiliSync"><span class="name">PiliSync</span><span class="sp"></span>
 <a class="navlink" href="#how">怎么用</a>
 <a class="navlink" href="#features">特性</a>
 <a class="navlink" href="https://github.com/RayMorTwinkle/PiliSync" rel="noopener">GitHub</a>
 </div></nav>
 
 <div class="hero"><div class="orb orb1"></div><div class="orb orb2"></div><div class="orb orb3"></div>
-<img class="icon" src="/icon.png" alt="PiliSync">
+<img class="icon" src="icon.png" alt="PiliSync">
 <h1>PiliSync</h1>
 <p class="tag">B 站第三方客户端，和朋友「一起看」<br>同步进度观影 · 双人语音通话 · 跨 Android / macOS / Windows</p>
 <span class="ver">◆ ` + html.EscapeString(verBadge) + `</span>

@@ -425,13 +425,16 @@ abstract final class Api {
 
   /// 国内渠道：PiliSync 信令服务器返回 GitHub 兼容的 release JSON
   /// （版本号/changelog/下载直链由 /update/publish 写入 data/latest.json）。
+  /// 信令后端走 api.raymor.top 的 /pilisync/ 前缀（nginx 去前缀反代到同一
+  /// 后端）；wt.raymor.top 保留为遗产别名，老版本 App 不受影响。
   static const String latestAppDomestic =
-      'https://wt.raymor.top/update/latest';
+      'https://api.raymor.top/pilisync/update/latest';
 
   /// 国内渠道官网落地页：永远指向最新 /dl/ 直链，做下载按钮的兜底入口。
-  static const String wtSite = 'https://wt.raymor.top/';
+  static const String wtSite = 'https://app.raymor.top/pilisync/';
 
-  static const String telemetryPing = 'https://wt.raymor.top/telemetry/ping';
+  static const String telemetryPing =
+      'https://api.raymor.top/pilisync/telemetry/ping';
 
   // 多少人在看
   // https://api.bilibili.com/x/player/online/total?aid=913663681&cid=1203559746&bvid=BV1MM4y1s7NZ&ts=56427838
