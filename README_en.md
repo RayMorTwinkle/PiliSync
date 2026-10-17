@@ -11,7 +11,7 @@
 On top of everything in [PiliNara](https://github.com/Starfallan/PiliNara) / [PiliPlus](https://github.com/bggRGjQaUbCoE/PiliPlus), PiliSync adds one thing: **multi-user synchronized playback (Watch Together) + WebRTC voice**, plus a self-built Go signaling server (`signaling/`).
 
 ![Platform](https://img.shields.io/badge/platform-Android%20%7C%20iOS%20%7C%20Windows%20%7C%20macOS%20%7C%20Linux-3DDC84?logo=android&logoColor=white)
-![Flutter](https://img.shields.io/badge/Flutter-3.47.2-02569B?logo=flutter&logoColor=white)
+![Flutter](https://img.shields.io/badge/Flutter-3.47.5-02569B?logo=flutter&logoColor=white)
 ![Dart](https://img.shields.io/badge/Dart-%3E%3D3.13-0175C2?logo=dart&logoColor=white)
 ![Watch Together](https://img.shields.io/badge/watch--together-WebRTC%20%2B%20Go%20signaling-7C3AED)
 ![License](https://img.shields.io/badge/license-GPL--3.0-blue)
@@ -71,7 +71,7 @@ Paste this prompt into your local AI Agent (Claude Code / Codex / OpenCode …):
 ````markdown
 Please build and run PiliSync (GitHub: https://github.com/RayMorTwinkle/PiliSync).
 Context: PiliSync is a Bilibili third-party client (Flutter) forked from PiliNara/PiliPlus, adding "Watch Together" synced playback + WebRTC voice.
-Environment: Flutter 3.47.2, Dart >= 3.13 (see .fvmrc at the repo root).
+Environment: Flutter 3.47.5, Dart >= 3.13 (see .fvmrc at the repo root). Before building you must patch the Flutter SDK and pub cache per docs/build.md (a stock SDK cannot compile this project).
 
 Steps:
 1. Clone: git clone https://github.com/RayMorTwinkle/PiliSync.git && cd PiliSync
@@ -93,7 +93,8 @@ flutter build apk --release --split-per-abi        # Android (the default packag
 # flutter build macos --release / flutter build windows --release / flutter build linux --release
 ```
 
-> **Requirements**: Flutter **3.47.2** (pinned in `.fvmrc`), Dart SDK `>=3.13.0`.
+> **Requirements**: Flutter **3.47.5** (pinned in `.fvmrc`), Dart SDK `>=3.13.0`.
+> **⚠️ Read before building**: this fork cannot compile with a stock Flutter SDK — you must first patch the Flutter SDK and pub cache as described in [docs/build.md](docs/build.md) (which also covers iOS-simulator gt3 gotchas and the release packaging flow).
 > Desktop and voice call rely on per-platform native setup (macOS embeds WebRTC via CocoaPods).
 
 ### Self-hosting the signaling server (optional, advanced)
@@ -135,6 +136,7 @@ The client's Watch Together page accepts a custom server address (default `wss:/
 | Setting | Storage key | Meaning |
 |---|---|---|
 | Server URL | `wtServerUrl` | Default `wss://wt.raymor.top` |
+| Update channel | `updateChannel` | Domestic or GitHub (defaults to the domestic channel) |
 | Loose mode | `wtLooseSync` | Rate-limited catch-up, widened to a 5s tolerance |
 | Host priority | `wtHostPriority` | A member's state never moves the host player |
 | Voice gate | `wtVoiceGate` | Silence below the threshold is never transmitted |
@@ -288,7 +290,7 @@ flowchart LR
   PN --> PS["RayMorTwinkle/PiliSync<br/>this repo: + watch-together · signaling · voice"]
 ```
 
-> ⚠️ **About the fork relationship**: GitHub's compare API reports that PiliSync shares **no common ancestor** with upstream `Starfallan/PiliNara@main` — this repo's history was rewritten (the upstream history was flattened into a single root commit, on top of which this fork's commits were layered). The "vs upstream" conclusions therefore rely mainly on the local `git log` and file comparison, not on Git ancestry.
+> ℹ️ **About the fork relationship**: this repo's upstream history was originally flattened into a single root commit (`9e645c99e`), and GitHub compare once reported "no common ancestor". After merging upstream `nara/main` (~668 commits) on 2025-10-08 the ancestry is connected — compare now shows **diverged · ahead 51 / behind 92** (merge-base `1807e22ed`). All "vs upstream" numbers below are measured locally and cross-checked against the GitHub compare API.
 
 ---
 
@@ -311,10 +313,12 @@ PiliSync/
 │   │   │   ├── wt_member_coordinator.dart   # member calibration
 │   │   │   ├── wt_playback_coordinator.dart # host barrier intent
 │   │   │   ├── wt_sync_logic.dart           # clock/extrapolation/calibrate (pure)
-│   │   │   ├── wt_player_adapter.dart       # player port adapter
+│   │   │   ├── wt_player_port.dart          # WtPlayerAdapter port interface
+│   │   │   ├── wt_player_adapter.dart       # PlPlayerAdapter impl + command source
 │   │   │   ├── wt_models.dart               # message/snapshot models
 │   │   │   └── wt_debug_server.dart         # debug control plane (kDebugMode only)
 │   │   ├── ai_chat/ telemetry/ download/ ...
+│   ├── scripts/                 # Flutter SDK / pub-cache patches (build prerequisite, see docs/build.md)
 │   ├── plugin/pl_player/        # media_kit player
 │   ├── http/ · models_new/ · utils/
 ├── signaling/                   # ★ Go signaling server
@@ -327,8 +331,10 @@ PiliSync/
 │   ├── Dockerfile · cmd/probe/  # container & connection probe
 │   └── README.md                # protocol reference (message tables + semantics)
 ├── tool/                        # wt_mirror / wt_connection_probe / wt_host_driver etc.
+├── docs/build.md                # ★ build guide: Flutter SDK patches / iOS sim gotchas / release packaging
+├── test/watch_together/         # Watch Together unit tests + signaling E2E (11 files)
 ├── android/ ios/ macos/ windows/ linux/
-└── pubspec.yaml                 # version: 2.9.2 · Flutter 3.47.2
+└── pubspec.yaml                 # version: 2.9.3 · Flutter 3.47.5 (pinned via .fvmrc)
 ```
 
 ---
@@ -352,6 +358,8 @@ PiliSync/
 **Telemetry boundary.** Each launch does `POST https://wt.raymor.top/telemetry/ping`, collecting only `device_id / version / build_time / mid / uname / open_count / wt_count / wt_secs`; IP and region are derived server-side. Toggleable at the bottom of settings.
 
 **Debug control plane.** `wt_debug_server.dart` listens on **loopback :9911** under **kDebugMode**, letting an external test driver create rooms / navigate / read state; it is compiled out of release builds.
+
+**Build patches (inherited modded Flutter).** The code references framework symbols that don't exist in a stock SDK (`horizontalDragGestureRecognizer`, custom scroll physics, text-selection behavior, etc.), so patching is a build prerequisite: three patch layers live in `lib/scripts/` (~21 SDK patches + pub-cache `material_ui`/`cupertino_ui` + iOS-only repo-side patches); `patch.ps1` is the Windows entry point, macOS/Linux use equivalent `git apply`. Full flow in [docs/build.md](docs/build.md); the pinned alignment versions in pubspec.lock are `material_ui 1.4.0` / `cupertino_ui 1.0.1` / `protobuf 6.1.0` (patches apply per-version paths — re-apply after upgrading).
 
 ---
 
@@ -398,21 +406,41 @@ A: Telemetry is **optional** and only sends aggregate counters (see "Technical n
 
 In one line: **PiliSync = PiliNara + Watch Together (with its own signaling/voice) + a domestic update channel + telemetry + a per-platform rename for coexistence.**
 
+> 📌 **Sync status (post-merge, 2025-10-08)**: this repo merged upstream `nara/main` (~**668** commits, merge commit `c3beba2d`), followed by merge-fallout fixes (deduped declarations, a `playerStatusStream` port, aligned pb/scroll_view/get deps) and a bump to **2.9.3**. Against `upstream/main` it is now **ahead 51 / behind 92** — upstream keeps moving fast (its version line is already `2.1.6+1` on Flutter 3.47.7), so further merges are expected.
+
 ### The real delta of this fork over upstream
 
 | Aspect | Upstream `Starfallan/PiliNara` | This repo `PiliSync` |
 |---|---|---|
 | Display name | PiliNara | **PiliSync** (Android label / macOS `PRODUCT_NAME` / Windows title all replaced for coexistence) |
+| Version line | `2.1.6+1` (upstream mainline, Flutter 3.47.7) | **`2.9.3`** (fork's own release line, Flutter 3.47.5) |
 | Server | none (client only) | **New `signaling/` Go server**: Watch Together signaling + update channel + telemetry + landing page |
 | Sync playback | none | **Room-based sync + WebRTC voice** (aligned with VideoTogether semantics) |
-| Update channel | GitHub Releases | **Domestic direct** `wt.raymor.top/update/latest`, GitHub as fallback |
+| Update channel | GitHub Releases | **Domestic direct** `wt.raymor.top/update/latest` + an in-settings channel toggle (`updateChannel`), GitHub as fallback |
 | Telemetry | none | **Optional** startup ping (toggleable) |
-| Build/deploy | mostly Android | added mac/win builds, Dockerized signaling, domestic publish pipeline |
-| Docs | README | bilingual showcase README + `signaling/README.md` protocol reference |
+| Build/deploy | mostly Android | one-tag mac/win_x64 releases, Dockerized signaling, domestic publish pipeline |
+| Docs | README | bilingual showcase README + `signaling/README.md` protocol reference + `docs/build.md` build guide |
+
+### Exact diff (measurable now that ancestry is connected)
+
+The numbers below come from `git diff upstream/main...HEAD` (everything the fork changed from merge-base to HEAD), cross-checked with the GitHub compare API: **146 files, +13,362 / −1,420**.
+
+| Group | Files | +/- | Contents |
+|---|---|---|---|
+| `signaling/` | 16 | +4,500 | the whole Go signaling server (ws/room/turn/update/telemetry/site + 1,432 lines of server tests) |
+| `lib/services/watch_together/` | 10 | +3,213 | Watch Together client core (coordinator / WS client / call / sync logic / player port) |
+| `test/watch_together/` | 11 | +1,920 | Watch Together unit tests and WS-protocol E2E |
+| `lib/pages/watch_together/` | 2 | +835 | Watch Together page + floating panel |
+| `lib/services/telemetry/` | 1 | +103 | telemetry service |
+| `tool/` | 4 | +409 | wt_mirror / wt_connection_probe / wt_host_driver test drivers |
+| `.github/workflows/` | 8 | +148/−76 | mac/win_x64 release pipelines, PR conditions repointed at this repo, etc. |
+| `lib/` other | 64 | +997/−615 | player-port wiring, settings keys, update channel, `playerStatusStream`, merge-resolution residue |
+| `android/ ios/ macos/ windows/ linux/` | 20 | +106/−110 | PiliSync rename, macOS WebRTC embedding, Windows packaging config |
+| repo root / docs / misc | 10 | +1,131/−618 | bilingual README, `docs/build.md`, pubspec, CHANGELOG trimming, etc. |
 
 ### Direct evidence from `git log`
 
-Of the 45 commits here, **44 are authored by RayMorTwinkle and only 1 root commit belongs to Starfallan (the flattened upstream snapshot)**. Ray's subject lines cluster around:
+`upstream/main..HEAD` holds **51 commits** (46 authored by RayMorTwinkle, 1 flattened upstream root commit, 4 merge-cleanup/docs commits), whose subject lines cluster around:
 
 ```text
 feat: watch-together core (signaling server + dart client + ui)
@@ -424,6 +452,9 @@ feat: landing page at / — PiliSync public site
 ci: 发版默认构建 mac + win_x64（一键 tag 出全平台）
 fix(watch-together): F12 deep-review — 26 verified defects fixed
 WT: host-priority mode — member state never moves the host player
+Merge nara/main (PiliPlus upstream ~668 commits) into PiliSync
+fix merge fallout: dedup declarations, restore upstream mixin structure, add playerStatusStream
+docs: build guide covering Flutter SDK patch requirement, iOS sim gotchas, release packaging
 ```
 
 → All pointing to the same conclusion: **this fork's delta is exactly "Watch Together + signaling + voice + update/telemetry/site + build/deploy"**.
@@ -431,7 +462,7 @@ WT: host-priority mode — member state never moves the host player
 ### What must be stated honestly
 
 - **The in-app PiP, AI subtitles, merged danmaku, custom fonts, author notes, recommend/dynamic/comment filters and the dual-view offline cache all come from upstream PiliNara** — they are not additions of this fork. The Features list above is sectioned accordingly.
-- Because the fork history was rewritten and upstream Git ancestry is not comparable, **an exact per-file diff cannot be fully reconstructed from local history**. The table above is derived from local commit subjects, new directories such as `signaling/`, and a line-by-line comparison with the upstream README; where it disagrees with upstream's latest state, the code wins.
+- The numbers above were measured against the `upstream/main` snapshot of 2025-10-09; as upstream advances, the behind-count and diff details will shift — re-measure with `git diff upstream/main...HEAD`.
 
 ---
 

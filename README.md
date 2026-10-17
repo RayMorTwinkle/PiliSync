@@ -11,7 +11,7 @@
 在 [PiliNara](https://github.com/Starfallan/PiliNara) / [PiliPlus](https://github.com/bggRGjQaUbCoE/PiliPlus) 的全部功能之上，PiliSync 加了一件事：**多人实时同步观影（Watch Together）+ WebRTC 语音**，并配了一个自研的 Go 信令服务器（`signaling/`）。
 
 ![Platform](https://img.shields.io/badge/platform-Android%20%7C%20iOS%20%7C%20Windows%20%7C%20macOS%20%7C%20Linux-3DDC84?logo=android&logoColor=white)
-![Flutter](https://img.shields.io/badge/Flutter-3.47.2-02569B?logo=flutter&logoColor=white)
+![Flutter](https://img.shields.io/badge/Flutter-3.47.5-02569B?logo=flutter&logoColor=white)
 ![Dart](https://img.shields.io/badge/Dart-%3E%3D3.13-0175C2?logo=dart&logoColor=white)
 ![Watch Together](https://img.shields.io/badge/watch--together-WebRTC%20%2B%20Go%20signaling-7C3AED)
 ![License](https://img.shields.io/badge/license-GPL--3.0-blue)
@@ -71,7 +71,7 @@
 ````markdown
 请帮我编译并运行 PiliSync（GitHub: https://github.com/RayMorTwinkle/PiliSync）。
 背景：PiliSync 是基于 PiliNara/PiliPlus 的 B 站第三方客户端（Flutter），核心新增「一起看」同步观影 + WebRTC 语音。
-环境：Flutter 3.47.2、Dart >= 3.13（见仓库根目录 .fvmrc）。
+环境：Flutter 3.47.5、Dart >= 3.13（见仓库根目录 .fvmrc）。构建前必须先按 docs/build.md 给 Flutter SDK 与 pub 缓存打补丁（原版 SDK 无法编译）。
 
 步骤：
 1. 克隆：git clone https://github.com/RayMorTwinkle/PiliSync.git && cd PiliSync
@@ -136,6 +136,7 @@ docker build -t pilisync-signaling signaling/
 | 设置 | 存储键 | 说明 |
 |---|---|---|
 | 服务器地址 | `wtServerUrl` | 默认 `wss://wt.raymor.top` |
+| 更新渠道 | `updateChannel` | 国内 / GitHub 可选（默认国内渠道）|
 | 宽松模式 | `wtLooseSync` | 追不上时限流补帧、放宽到 5s 阈值 |
 | 房主优先 | `wtHostPriority` | 成员状态永不拖动房主播放器 |
 | 语音门限 | `wtVoiceGate` | 低于阈值的静音直接不发声 |
@@ -289,7 +290,7 @@ flowchart LR
   PN --> PS["RayMorTwinkle/PiliSync<br/>本仓库：+ 一起看 · 信令 · 语音"]
 ```
 
-> ⚠️ **关于 fork 关系**：GitHub compare API 认为 PiliSync 与上游 `Starfallan/PiliNara@main` **无共同祖先**——本仓库的历史被重写过（上游历史被压平为一个根提交，其后再叠加本 fork 的提交）。因此「vs 上游」的结论主要依据本地 `git log` 与文件比对，而非 Git 血缘。
+> ℹ️ **关于 fork 关系**：本仓库的上游历史最初被压平为单个根提交（`9e645c99e`），GitHub compare 曾报「无共同祖先」。2025-10-08 合并上游 `nara/main`（约 668 个提交）后血缘已连通——compare 现显示 **diverged · ahead 51 / behind 92**（merge-base `1807e22ed`）。下述「vs 上游」数据均来自本地实测与 GitHub compare API。
 
 ---
 
@@ -312,10 +313,12 @@ PiliSync/
 │   │   │   ├── wt_member_coordinator.dart   # 成员校准
 │   │   │   ├── wt_playback_coordinator.dart # 房主屏障意图
 │   │   │   ├── wt_sync_logic.dart           # 对时 + 外推 + calibrate（纯逻辑）
-│   │   │   ├── wt_player_adapter.dart       # 播放器端口适配
+│   │   │   ├── wt_player_port.dart          # WtPlayerAdapter 端口接口
+│   │   │   ├── wt_player_adapter.dart       # PlPlayerAdapter 实现 + 命令源接口
 │   │   │   ├── wt_models.dart               # 消息/快照模型
 │   │   │   └── wt_debug_server.dart         # 调试控制面（仅 kDebugMode）
 │   │   ├── ai_chat/ telemetry/ download/ ...
+│   ├── scripts/                 # Flutter SDK / pub 缓存补丁（构建前置，见 docs/build.md）
 │   ├── plugin/pl_player/        # media_kit 播放器
 │   ├── http/ · models_new/ · utils/
 ├── signaling/                   # ★ Go 信令服务器
@@ -328,8 +331,10 @@ PiliSync/
 │   ├── Dockerfile · cmd/probe/  # 容器与连接探针
 │   └── README.md                # 协议参考（消息表 + 关键语义）
 ├── tool/                        # wt_mirror / wt_connection_probe / wt_host_driver 等
+├── docs/build.md                # ★ 构建指南：Flutter SDK 补丁 / iOS 模拟器坑 / release 打包
+├── test/watch_together/         # 一起看单测 + 信令 E2E（11 个测试文件）
 ├── android/ ios/ macos/ windows/ linux/
-└── pubspec.yaml                 # version: 2.9.2 · Flutter 3.47.2
+└── pubspec.yaml                 # version: 2.9.3 · Flutter 3.47.5（.fvmrc 锁定）
 ```
 
 ---
@@ -356,6 +361,8 @@ PiliSync/
 **遥测边界。** 每次启动 `POST https://wt.raymor.top/telemetry/ping`，只收集 `device_id / version / build_time / mid / uname / open_count / wt_count / wt_secs`，IP 与属地由服务端推导，设置底部可关闭。
 
 **调试控制面。** `wt_debug_server.dart` 在 **kDebugMode** 下监听 **loopback :9911**，供外部测试驱动直接建房/跳转/读状态，release 构建会被编译剔除。
+
+**构建补丁（继承上游的魔改 Flutter）。** 代码引用了原版 SDK 不存在的框架符号（`horizontalDragGestureRecognizer`、定制滚动物理、文本选择行为等），必须先打补丁再编译：三层补丁清单在 `lib/scripts/`（SDK 本体 ~21 个 + pub 缓存 `material_ui`/`cupertino_ui` + iOS 专用 repo 侧补丁），`patch.ps1` 为 Windows 入口，macOS/Linux 用 `git apply` 等价执行——完整流程见 [docs/build.md](docs/build.md)；pubspec.lock 当前锁定的对齐版本为 `material_ui 1.4.0` / `cupertino_ui 1.0.1` / `protobuf 6.1.0`（补丁按版本路径打，升包后需重打）。
 
 ---
 
@@ -402,21 +409,41 @@ A：遥测是**可关**的，只上报聚合计数（见「技术细节 · 遥�
 
 一句话：**PiliSync = PiliNara + 一起看（含自研信令/语音）+ 国内更新渠道 + 遥测 + 各平台改名共存。**
 
+> 📌 **同步状态（2025-10-08 合并后）**：本仓库已合并上游 `nara/main` 约 **668** 个提交（merge commit `c3beba2d`），随后完成合并善后（重复声明去重、`playerStatusStream` 端口、pb/scroll_view/get 依赖对齐）并 bump 到 **2.9.3**。当前相对 `upstream/main`：**ahead 51 / behind 92**——上游仍在活跃演进（其版本线已到 `2.1.6+1`，Flutter 3.47.7），后续会择机再合并。
+
 ### 本 fork 相对上游的真实增量
 
 | 维度 | 上游 `Starfallan/PiliNara` | 本仓库 `PiliSync` |
 |---|---|---|
 | 应用显示名 | PiliNara | **PiliSync**（Android label / macOS `PRODUCT_NAME` / Windows 窗口标题均已替换，便于共存）|
+| 版本线 | `2.1.6+1`（上游主线，Flutter 3.47.7） | **`2.9.3`**（fork 自发版号线，Flutter 3.47.5）|
 | 服务端 | 无（纯客户端） | **新增 `signaling/` Go 服务器**：一起看信令 + 更新渠道 + 遥测 + 官网 |
 | 同步观影 | 无 | **房间制同步 + WebRTC 语音**（对齐 VideoTogether 语义）|
-| 更新渠道 | GitHub Releases | **国内直连** `wt.raymor.top/update/latest`，GitHub 降为备选 |
+| 更新渠道 | GitHub Releases | **国内直连** `wt.raymor.top/update/latest` + 设置内渠道切换（`updateChannel`），GitHub 降为备选 |
 | 遥测 | 无 | **可选**启动 ping（可关闭）|
-| 构建/部署 | Android 为主 | 补 mac/win 构建、Docker 化信令、国内发文链路 |
-| 文档 | README | 中英双语展示级 README + `signaling/README.md` 协议参考 |
+| 构建/部署 | Android 为主 | 补 mac/win_x64 一键 tag 发版、Docker 化信令、国内分发链路 |
+| 文档 | README | 中英双语展示级 README + `signaling/README.md` 协议参考 + `docs/build.md` 构建指南 |
+
+### 精确 diff（合并后血缘已连通，可实测）
+
+以下数字来自 `git diff upstream/main...HEAD`（merge-base→HEAD 的全部 fork 改动），并与 GitHub compare API 核对一致：**146 个文件，+13,362 / −1,420**。
+
+| 分组 | 文件数 | 增删 | 内容 |
+|---|---|---|---|
+| `signaling/` | 16 | +4,500 | Go 信令服务器全部（ws/room/turn/update/telemetry/site + 1,432 行服务端测试）|
+| `lib/services/watch_together/` | 10 | +3,213 | 一起看客户端核心（协调器/WS 客户端/通话/同步逻辑/播放器端口）|
+| `test/watch_together/` | 11 | +1,920 | 一起看单测与 WS 协议 E2E |
+| `lib/pages/watch_together/` | 2 | +835 | 一起看页面 + 悬浮面板 |
+| `lib/services/telemetry/` | 1 | +103 | 遥测服务 |
+| `tool/` | 4 | +409 | wt_mirror / wt_connection_probe / wt_host_driver 调试驱动 |
+| `.github/workflows/` | 8 | +148/−76 | mac/win_x64 发版流水线、PR 条件改为本仓库名等 |
+| `lib/` 其他 | 64 | +997/−615 | 播放器端口接入、设置项、更新渠道、`playerStatusStream` 等合并善后残差 |
+| `android/ ios/ macos/ windows/ linux/` | 20 | +106/−110 | PiliSync 改名、macOS WebRTC 嵌入、Windows 打包配置 |
+| 根目录 / docs / 其他 | 10 | +1,131/−618 | 中英 README、`docs/build.md`、pubspec、CHANGELOG 裁剪等 |
 
 ### 通过 `git log` 得到的直接证据
 
-本仓库 45 个提交中，**44 个作者为 RayMorTwinkle，仅 1 个根提交属 Starfallan（被压平的上游快照）**。Ray 的提交主题集中在：
+`upstream/main..HEAD` 共 **51 个提交**（46 个作者为 RayMorTwinkle、1 个压平上游根提交、4 个合并善后与文档提交），主题集中在：
 
 ```text
 feat: watch-together core (signaling server + dart client + ui)
@@ -428,6 +455,9 @@ feat: landing page at / — PiliSync public site
 ci: 发版默认构建 mac + win_x64（一键 tag 出全平台）
 fix(watch-together): F12 deep-review — 26 verified defects fixed
 WT: host-priority mode — member state never moves the host player
+Merge nara/main (PiliPlus upstream ~668 commits) into PiliSync
+fix merge fallout: dedup declarations, restore upstream mixin structure, add playerStatusStream
+docs: build guide covering Flutter SDK patch requirement, iOS sim gotchas, release packaging
 ```
 
 → 均指向同一结论：**本 fork 的增量就是「一起看 + 信令 + 语音 + 更新/遥测/官网 + 构建部署」**。
@@ -435,7 +465,7 @@ WT: host-priority mode — member state never moves the host player
 ### 需要如实澄清的部分
 
 - **小窗、AI 字幕、合并弹幕、自定义字体、备注、推荐/动态/评论过滤、离线缓存双视图等，均由上游 PiliNara 提供**，并非本 fork 新增。本 README 的「功能」列表已按此分节标注。
-- 由于 fork 历史被重写、上游 `git` 血缘不可比，**逐文件的精确 diff 无法从本地历史完整还原**；上表依据本地提交主题、`signaling/` 等新增目录与上游 README 逐条比对得出，如与上游最新状态不符，以代码为准。
+- 上表数字是对 `upstream/main` 当前快照（2025-10-09）的实测；上游再推进后 behind 数与 diff 明细会变化，以 `git diff upstream/main...HEAD` 复测为准。
 
 ---
 
