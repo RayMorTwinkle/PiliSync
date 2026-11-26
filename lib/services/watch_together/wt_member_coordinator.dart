@@ -4,7 +4,9 @@ import 'package:PiliPlus/services/watch_together/wt_sync_logic.dart';
 
 /// Runs the member calibration used by the app; player and time are injectable.
 class WtMemberCoordinator {
-  double _lastMemberSync = 0;
+  double _lastMemberSync = -double.infinity;
+  Object? _playerIdentity;
+  int _generation = 0;
   double? _memberLastSeek;
   double? get lastSeek => _memberLastSeek;
   // Settling window after a seek: suppresses repeated seeks while the
@@ -33,7 +35,9 @@ class WtMemberCoordinator {
   late void Function(String) dbg;
 
   void reset() {
-    _lastMemberSync = 0;
+    _generation++;
+    _playerIdentity = null;
+    _lastMemberSync = -double.infinity;
     _memberLastSeek = null;
     _lastSeekAt = -double.infinity;
     _loadingRunStart = null;
@@ -65,6 +69,15 @@ class WtMemberCoordinator {
     // barrier and chases with rate-limited catch-up seeks.
     bool looseSync = false,
   }) async {
+    final identity = player.identity;
+    if (!identical(identity, _playerIdentity)) {
+      reset();
+      _playerIdentity = identity;
+    }
+    final generation = _generation;
+    bool stillCurrent() =>
+        generation == _generation && identical(identity, player.identity);
+
     this.player = player;
     dbg = log;
     // VT: 1s throttle between member syncs (vt.js:3463)
@@ -107,11 +120,11 @@ class WtMemberCoordinator {
     // Mirror of farBehind for the member that is ahead (the fast-loading
     // side): pausing to wait beats a backwards seek that flushes the
     // buffer and re-triggers the loading barrier.
-    if (looseSync && !room.paused && canSeek && -behind > _farBehindSeconds) {
-      _farAheadHold = true;
-    } else if (-behind < _farAheadResumeSeconds) {
-      _farAheadHold = false;
-    }
+    final mayHold = looseSync && !room.paused && canSeek;
+    final ahead = -behind;
+    _farAheadHold = mayHold &&
+        (ahead > _farBehindSeconds ||
+            (_farAheadHold && ahead >= _farAheadResumeSeconds));
     final catchupReady =
         farBehind &&
         !isSettling &&
@@ -148,29 +161,13 @@ class WtMemberCoordinator {
       );
     }
     if (!action.isEmpty) {
-      if (action.seekTo != null) {
-        _memberLastSeek = action.seekTo!;
-      } else {
-        // any successful non-seek round clears the pending-seek marker
-        _memberLastSeek = null;
-      }
-      dbg(
+      _memberLastSeek = action.seekTo;
+      log(
         'CALIBRATE ${action}local=$localTime room=${room.currentTime}'
         '(${room.paused ? "paused" : "playing"})',
       );
-      // Measure when the seek actually lands: settle/silence must start
-      // then, not at issue time — a 3s-timeout seek issued with _lastSeekAt
-      // at tick time would silently shorten the protection window.
-      final sw = Stopwatch()..start();
-      await _executeAction(action);
-      if (action.seekTo != null) {
-        final landed = now + sw.elapsedMilliseconds / 1000;
-        _lastSeekAt = landed;
-        _lastCatchupAt = landed;
-        // The seek discards whatever buffer accumulated — restart the
-        // exemption run so the next allowed realign is another cap away.
-        _loadingRunStart = landed;
-      }
+      await _executeAction(action, player, log, stillCurrent, now);
+      if (!stillCurrent()) return;
     }
 
     // Read AFTER commands; do not reuse the pre-seek position as readiness.
@@ -187,33 +184,46 @@ class WtMemberCoordinator {
     reportLoading(loading);
   }
 
-  Future<void> _executeAction(WtSyncAction action) async {
+  Future<void> _executeAction(
+    WtSyncAction action,
+    WtPlayerAdapter player,
+    void Function(String) log,
+    bool Function() stillCurrent,
+    double now,
+  ) async {
     const timeout = Duration(seconds: 3);
     if (action.seekTo != null) {
+      // Even rejected catch-up attempts must respect the buffering rate limit.
+      _lastCatchupAt = now;
+      final elapsed = Stopwatch()..start();
       try {
         await player.seekToMs(action.seekTo! * 1000).timeout(timeout);
-      } catch (e) {
-        dbg('seek timeout: $e');
+        if (!stillCurrent()) return;
+        // Only a completed seek can justify suppressing a readiness report.
+        final landed = now + elapsed.elapsedMicroseconds / 1000000;
+        _lastSeekAt = landed;
+        _lastCatchupAt = landed;
+        _loadingRunStart = landed;
+      } catch (error) {
+        log('seek failed: $error');
       }
+      if (!stillCurrent()) return;
     }
     if (action.playbackRate != null) {
       try {
         await player.setSpeed(action.playbackRate!).timeout(timeout);
-      } catch (e) {
-        dbg('rate timeout: $e');
+      } catch (error) {
+        log('rate failed: $error');
       }
+      if (!stillCurrent()) return;
     }
     if (action.play != null) {
       try {
-        if (action.play!) {
-          await player.play().timeout(timeout);
-        } else {
-          await player.pause().timeout(timeout);
-        }
-      } catch (e) {
-        dbg('playpause timeout: $e');
+        final command = action.play! ? player.play() : player.pause();
+        await command.timeout(timeout);
+      } catch (error) {
+        log('play/pause failed: $error');
       }
     }
   }
-
 }
