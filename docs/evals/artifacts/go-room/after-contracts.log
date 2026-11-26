@@ -1,0 +1,83 @@
+refactor/1126 b3abd58d547a8ccf5378473c478c8f4b8f47a4f2
+tested signaling tree sha256: 60accddfe6f6985abcd90a91c07b0cf0ffdea5c8dd5a28b0e120df904a85e962
+fixture sha256: f4990e82605a509bc06f5707414cb778a63e49e8bb08deb8db74f7e642a3ca72
+go version go1.24.3 darwin/arm64
+$ go test -trimpath -race -count=1 -run ^TestRoomWire -v .
+=== RUN   TestRoomWirePlayback
+=== RUN   TestRoomWirePlayback/missing-both
+2026/11/26 23:48:33 [room] created missing-both host=sender
+=== RUN   TestRoomWirePlayback/null-both
+2026/11/26 23:48:33 [leave] room=missing-both user=sender
+2026/11/26 23:48:33 [room] created null-both host=sender
+=== RUN   TestRoomWirePlayback/missing-rate
+2026/11/26 23:48:33 [leave] room=null-both user=sender
+2026/11/26 23:48:33 [room] created missing-rate host=sender
+=== RUN   TestRoomWirePlayback/missing-paused
+2026/11/26 23:48:33 [leave] room=missing-rate user=sender
+2026/11/26 23:48:33 [room] created missing-paused host=sender
+=== RUN   TestRoomWirePlayback/explicit-zero
+2026/11/26 23:48:33 [leave] room=missing-paused user=sender
+2026/11/26 23:48:33 [room] created explicit-zero host=sender
+=== RUN   TestRoomWirePlayback/explicit-playing
+2026/11/26 23:48:33 [leave] room=explicit-zero user=sender
+2026/11/26 23:48:33 [room] created explicit-playing host=sender
+=== RUN   TestRoomWirePlayback/explicit-paused
+2026/11/26 23:48:33 [leave] room=explicit-playing user=sender
+2026/11/26 23:48:33 [room] created explicit-paused host=sender
+2026/11/26 23:48:33 [leave] room=explicit-paused user=sender
+--- PASS: TestRoomWirePlayback (0.01s)
+    --- PASS: TestRoomWirePlayback/missing-both (0.00s)
+    --- PASS: TestRoomWirePlayback/null-both (0.00s)
+    --- PASS: TestRoomWirePlayback/missing-rate (0.00s)
+    --- PASS: TestRoomWirePlayback/missing-paused (0.00s)
+    --- PASS: TestRoomWirePlayback/explicit-zero (0.00s)
+    --- PASS: TestRoomWirePlayback/explicit-playing (0.00s)
+    --- PASS: TestRoomWirePlayback/explicit-paused (0.00s)
+=== RUN   TestRoomWireBarrier
+=== RUN   TestRoomWireBarrier/missing-type
+2026/11/26 23:48:33 [room] created missing-type host=sender
+2026/11/26 23:48:33 [join] room=missing-type user=viewer host=false
+=== RUN   TestRoomWireBarrier/null-type
+2026/11/26 23:48:33 [leave] room=missing-type user=viewer
+2026/11/26 23:48:33 [leave] room=missing-type user=sender
+2026/11/26 23:48:33 [room] created null-type host=sender
+2026/11/26 23:48:33 [join] room=null-type user=viewer host=false
+=== RUN   TestRoomWireBarrier/matching-video
+2026/11/26 23:48:33 [leave] room=null-type user=sender
+2026/11/26 23:48:33 [leave] room=null-type user=viewer
+2026/11/26 23:48:33 [room] created matching-video host=sender
+2026/11/26 23:48:33 [join] room=matching-video user=viewer host=false
+=== RUN   TestRoomWireBarrier/different-part
+2026/11/26 23:48:33 [leave] room=matching-video user=sender
+2026/11/26 23:48:33 [leave] room=matching-video user=viewer
+2026/11/26 23:48:33 [room] created different-part host=sender
+2026/11/26 23:48:33 [join] room=different-part user=viewer host=false
+=== RUN   TestRoomWireBarrier/different-type
+2026/11/26 23:48:33 [leave] room=different-part user=sender
+2026/11/26 23:48:33 [leave] room=different-part user=viewer
+2026/11/26 23:48:33 [room] created different-type host=sender
+2026/11/26 23:48:33 [join] room=different-type user=viewer host=false
+=== RUN   TestRoomWireBarrier/explicit-empty-type
+2026/11/26 23:48:33 [leave] room=different-type user=sender
+2026/11/26 23:48:33 [leave] room=different-type user=viewer
+2026/11/26 23:48:33 [room] created explicit-empty-type host=sender
+2026/11/26 23:48:33 [join] room=explicit-empty-type user=viewer host=false
+=== RUN   TestRoomWireBarrier/null-target
+2026/11/26 23:48:33 [leave] room=explicit-empty-type user=sender
+2026/11/26 23:48:33 [leave] room=explicit-empty-type user=viewer
+2026/11/26 23:48:33 [room] created null-target host=sender
+2026/11/26 23:48:33 [join] room=null-target user=viewer host=false
+--- PASS: TestRoomWireBarrier (0.02s)
+    --- PASS: TestRoomWireBarrier/missing-type (0.00s)
+    --- PASS: TestRoomWireBarrier/null-type (0.00s)
+    --- PASS: TestRoomWireBarrier/matching-video (0.00s)
+    --- PASS: TestRoomWireBarrier/different-part (0.00s)
+    --- PASS: TestRoomWireBarrier/different-type (0.00s)
+    --- PASS: TestRoomWireBarrier/explicit-empty-type (0.00s)
+    --- PASS: TestRoomWireBarrier/null-target (0.00s)
+2026/11/26 23:48:33 [leave] room=null-target user=viewer
+2026/11/26 23:48:33 [leave] room=null-target user=sender
+PASS
+ok  	pilisync/signaling	1.273s
+
+exit=0

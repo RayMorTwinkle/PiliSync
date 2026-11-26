@@ -1,0 +1,9 @@
+refactor/1126 b3abd58d547a8ccf5378473c478c8f4b8f47a4f2
+tested signaling tree sha256: 60accddfe6f6985abcd90a91c07b0cf0ffdea5c8dd5a28b0e120df904a85e962
+fixture sha256: f4990e82605a509bc06f5707414cb778a63e49e8bb08deb8db74f7e642a3ca72
+go version go1.24.3 darwin/arm64
+$ go test -trimpath -count=1 -skip ^TestRoomWire ./...
+ok  	pilisync/signaling	1.180s
+?   	pilisync/signaling/cmd/probe	[no test files]
+
+exit=0

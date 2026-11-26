@@ -1,0 +1,50 @@
+{
+  "before": {
+    "revision": "backup1126 314adb86a46f49ec0340ed2f3d9da62af28dbd67",
+    "tested_tree_sha256": "cd4bb2c8df313257c7edd92b395f17e65916c51c8503192f3fd7afb9613d927e",
+    "existing_exit": 0,
+    "contracts_exit": 1,
+    "cases": {
+      "TestRoomWirePlayback/missing-both": "FAIL",
+      "TestRoomWirePlayback/null-both": "FAIL",
+      "TestRoomWirePlayback/missing-rate": "FAIL",
+      "TestRoomWirePlayback/missing-paused": "FAIL",
+      "TestRoomWirePlayback/explicit-zero": "PASS",
+      "TestRoomWirePlayback/explicit-playing": "PASS",
+      "TestRoomWirePlayback/explicit-paused": "PASS",
+      "TestRoomWireBarrier/missing-type": "FAIL",
+      "TestRoomWireBarrier/null-type": "FAIL",
+      "TestRoomWireBarrier/matching-video": "PASS",
+      "TestRoomWireBarrier/different-part": "PASS",
+      "TestRoomWireBarrier/different-type": "PASS",
+      "TestRoomWireBarrier/explicit-empty-type": "PASS",
+      "TestRoomWireBarrier/null-target": "PASS"
+    },
+    "passed": 8,
+    "total": 14
+  },
+  "after": {
+    "revision": "refactor/1126 b3abd58d547a8ccf5378473c478c8f4b8f47a4f2",
+    "tested_tree_sha256": "60accddfe6f6985abcd90a91c07b0cf0ffdea5c8dd5a28b0e120df904a85e962",
+    "existing_exit": 0,
+    "contracts_exit": 0,
+    "cases": {
+      "TestRoomWirePlayback/missing-both": "PASS",
+      "TestRoomWirePlayback/null-both": "PASS",
+      "TestRoomWirePlayback/missing-rate": "PASS",
+      "TestRoomWirePlayback/missing-paused": "PASS",
+      "TestRoomWirePlayback/explicit-zero": "PASS",
+      "TestRoomWirePlayback/explicit-playing": "PASS",
+      "TestRoomWirePlayback/explicit-paused": "PASS",
+      "TestRoomWireBarrier/missing-type": "PASS",
+      "TestRoomWireBarrier/null-type": "PASS",
+      "TestRoomWireBarrier/matching-video": "PASS",
+      "TestRoomWireBarrier/different-part": "PASS",
+      "TestRoomWireBarrier/different-type": "PASS",
+      "TestRoomWireBarrier/explicit-empty-type": "PASS",
+      "TestRoomWireBarrier/null-target": "PASS"
+    },
+    "passed": 14,
+    "total": 14
+  }
+}

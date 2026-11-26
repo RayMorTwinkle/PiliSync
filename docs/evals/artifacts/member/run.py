@@ -15,11 +15,11 @@ harness = Path(__file__).with_name("replay.dart").resolve()
 source = repo / "lib/services/watch_together"
 with tempfile.TemporaryDirectory() as tmp:
     config = Path(tmp) / "package_config.json"
-    # The four pure-Dart production files use Dart 3 syntax and no plugins.
+    # Match the package language version in the project SDK constraint.
     # Map package:PiliPlus to the checkout without modifying its Pub lock.
     config.write_text(json.dumps({"configVersion": 2, "packages": [
         {"name": "PiliPlus", "rootUri": repo.as_uri() + "/", "packageUri": "lib/",
-         "languageVersion": "3.0"}
+         "languageVersion": "3.13"}
     ]}))
     def sha(path):
         return hashlib.sha256(path.read_bytes()).hexdigest()

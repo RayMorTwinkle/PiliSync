@@ -1,0 +1,17 @@
+{"revision": "d11e7657f60f543c1f02fe001d42a2014dbc0b79", "dart": "Dart SDK version: 3.13.4 (stable) (Tue Sep 15 01:01:15 2026 -0700) on \"macos_arm64\"", "fixtures_sha256": "29087ea49048568b471b9e585ce8fc10c9a84c5dee485fe11552f93956a86133", "source_sha256": {"wt_member_coordinator.dart": "94d3cd8e80d2f21cd036f08445c1b804b42bc00e8b60915ccfafc39f1f4e0e78", "wt_models.dart": "2bced8649d759dd6617e02a93c68c11093fd043424af37904ee1531be5c2a4d8", "wt_player_port.dart": "bff68597e6f6c7067cff986afa44494b53c80b68cc3b022ea3c234c89246d9ad", "wt_sync_logic.dart": "919184d140e17962e0b6a25ca6ee20061e5d34ed4570abcf276c383719707a7e"}}
+{"case":"hold-then-host-pauses","expected":["pause","seek:10000"],"observed":["pause","seek:10000"],"pass":true}
+{"case":"hold-then-strict","expected":["pause","seek:10000","play"],"observed":["pause","seek:10000","play"],"pass":true}
+{"case":"hold-then-unsampled-clock","expected":["pause","play"],"observed":["pause","play"],"pass":true}
+{"case":"external-pause-still-honored","expected":["pause"],"observed":["pause"],"pass":true}
+{"case":"hold-at-release-boundary","expected":["pause"],"observed":["pause"],"pass":true}
+{"case":"resume-inside-release-boundary","expected":["pause","play"],"observed":["pause","play"],"pass":true}
+{"case":"no-hold-at-entry-boundary","expected":[],"observed":[],"pass":true}
+{"case":"reset-during-seek","expected":["seek:10000",0,false],"observed":["seek:10000",0,false],"pass":true}
+{"case":"player-replaced-during-seek","expected":["seek:10000",0,false],"observed":["seek:10000",0,false],"pass":true}
+{"case":"successful-command-order","expected":["seek:10000","rate:1.5","play",1,true],"observed":["seek:10000","rate:1.5","play",1,true],"pass":true}
+{"case":"refused-seek-retries-next-tick","expected":["seek:10000",false,"seek:10000",true],"observed":["seek:10000",false,"seek:10000",true],"pass":true}
+{"case":"successful-seek-settles","expected":["seek:10000"],"observed":["seek:10000"],"pass":true}
+{"case":"new-player-calibrates-immediately","expected":["seek:10000","seek:10000"],"observed":["seek:10000","seek:10000"],"pass":true}
+{"case":"reset-during-rate-change","expected":["rate:1.5",0],"observed":["rate:1.5",0],"pass":true}
+{"case":"refused-loose-catchup-paced","expected":["seek:50000","seek:50000"],"observed":["seek:50000","seek:50000"],"pass":true}
+{"passed":15,"checks":15}
