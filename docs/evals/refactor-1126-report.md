@@ -61,7 +61,7 @@ python3 docs/evals/artifacts/go-room/replay.py --baseline 314adb86a46f49ec0340ed
 python3 docs/evals/artifacts/boundaries/compare.py
 ```
 
-完整 Flutter 复测使用两个专用检出、Flutter 3.47.5 的独立 SDK 和准备好的 Pub 缓存。缓存需要包含锁定版本及测试锁中补齐的包，SDK 和 material_ui 需先按 macOS 配套脚本应用项目补丁。脚本在结束时恢复原锁，命令和两个检出的运行日志写到指定目录。[补丁脚本](artifacts/flutter-suite/patch_macos.py) · [全套复现脚本](artifacts/flutter-suite/run.py)
+完整 Flutter 复测使用两个专用检出、Flutter 3.47.5 的独立 SDK 和准备好的 Pub 缓存。缓存需要包含锁定版本及测试锁中补齐的包，SDK 和 material_ui 需先按 macOS 配套脚本应用项目补丁。脚本在结束时恢复原锁，命令和两个检出的运行日志写到指定目录。[环境与复测步骤](artifacts/flutter-suite/README.md) · [补丁脚本](artifacts/flutter-suite/patch_macos.py) · [全套复现脚本](artifacts/flutter-suite/run.py)
 
 ```sh
 git worktree add --detach ../PiliSync-candidate d11e7657f60f543c1f02fe001d42a2014dbc0b79
