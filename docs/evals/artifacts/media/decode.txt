@@ -1,0 +1,49 @@
+Input #0, mov,mp4,m4a,3gp,3g2,mj2, from 'docs/media/promo.mp4':
+  Metadata:
+    major_brand     : isom
+    minor_version   : 512
+    compatible_brands: isomiso2avc1mp41
+    title           : PiliSync · 两块屏幕，同一个瞬间
+    encoder         : Lavf63.1.100
+  Duration: 00:01:06.00, start: 0.000000, bitrate: 2455 kb/s
+  Stream #0:0[0x1](und): Video: h264 (High) (avc1 / 0x31637661), yuv420p(tv, bt709/unknown/unknown, progressive), 1920x1080, 2253 kb/s, 30 fps, 30 tbr, 15360 tbn (default)
+    Metadata:
+      handler_name    : VideoHandler
+      encoder         : Lavc63.1.100 libx264
+  Stream #0:1[0x2](und): Audio: aac (LC) (mp4a / 0x6134706D), 48000 Hz, stereo, fltp, 192 kb/s (default)
+    Metadata:
+      handler_name    : SoundHandler
+Stream mapping:
+  Stream #0:0 -> #0:0 (h264 (native) -> wrapped_avframe (native))
+  Stream #0:1 -> #0:1 (aac (native) -> pcm_s16le (native))
+Output #0, null, to 'pipe:':
+  Metadata:
+    major_brand     : isom
+    minor_version   : 512
+    compatible_brands: isomiso2avc1mp41
+    title           : PiliSync · 两块屏幕，同一个瞬间
+    encoder         : Lavf63.1.100
+  Stream #0:0(und): Video: wrapped_avframe, yuv420p(tv, bt709/unknown/unknown, progressive), 1920x1080, q=2-31, 200 kb/s, 30 fps, 30 tbn (default)
+    Metadata:
+      encoder         : Lavc63.1.100 wrapped_avframe
+      handler_name    : VideoHandler
+  Stream #0:1(und): Audio: pcm_s16le, 48000 Hz, stereo, s16, 1536 kb/s (default)
+    Metadata:
+      encoder         : Lavc63.1.100 pcm_s16le
+      handler_name    : SoundHandler
+[Parsed_ebur128_0 @ 0x6000017d4000] Summary:
+
+  Integrated loudness:
+    I:         -17.3 LUFS
+    Threshold: -27.6 LUFS
+
+  Loudness range:
+    LRA:         4.6 LU
+    Threshold: -37.5 LUFS
+    LRA low:   -20.5 LUFS
+    LRA high:  -15.8 LUFS
+
+  True peak:
+    Peak:       -2.8 dBFS
+[out#0/null @ 0x6000015d83c0] video:820KiB audio:12375KiB subtitle:0KiB other streams:0KiB global headers:0KiB muxing overhead: unknown
+frame= 1980 fps=1873 q=-0.0 Lsize=N/A time=00:01:06.00 bitrate=N/A speed=62.4x elapsed=0:00:01.05    

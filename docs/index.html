@@ -1,0 +1,93 @@
+<!doctype html>
+<html lang="zh-CN">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width,initial-scale=1">
+  <meta name="theme-color" content="#0a1115">
+  <meta name="description" content="PiliSync 一起看。和远方的朋友同步看视频、开语音，用可交互的时间轴体验播放器如何校准。">
+  <title>PiliSync · 一起看的时间线</title>
+  <link rel="stylesheet" href="showcase/site.css">
+  <script defer src="showcase/lab.js"></script>
+</head>
+<body>
+  <a class="skip" href="#main">跳到正文</a>
+  <header class="top">
+    <nav class="wrap nav" aria-label="主导航">
+      <a class="wordmark" href="#main" aria-label="PiliSync 首页"><span class="mark" aria-hidden="true"></span>PiliSync</a>
+      <div class="nav-items"><a href="#lab">校准实验台</a><a href="#film">短片</a><a class="github" href="https://github.com/RayMorTwinkle/PiliSync">GitHub ↗</a></div>
+    </nav>
+  </header>
+  <main id="main">
+    <section class="hero" aria-labelledby="hero-title">
+      <div class="wrap hero-grid">
+        <div class="intro">
+          <p class="kicker"><i aria-hidden="true"></i> 开源同步观影客户端</p>
+          <h1 id="hero-title">两块屏幕，<br><em>同一幕。</em></h1>
+          <p class="lede">房主按下暂停，朋友的画面也停下来。PiliSync 把播放进度和双人语音带进同一个「一起看」房间。</p>
+          <div class="actions"><a class="primary" href="#lab">试试同步校准 <span aria-hidden="true">↓</span></a><a class="secondary" href="#film"><span aria-hidden="true">▷</span> 观看短片</a></div>
+        </div>
+        <figure class="cover">
+          <img src="showcase/film-ribbon.webp" alt="一卷电影胶片上，相邻两帧记录着同一座山的落日。" width="1536" height="1024" fetchpriority="high">
+          <figcaption><span>同一场落日</span><span>概念插画</span></figcaption>
+        </figure>
+      </div>
+    </section>
+    <div class="wrap stack" aria-label="技术架构">
+      <div><b>Flutter</b><span>播放与校准</span></div><div><b>Go</b><span>房间信令</span></div><div><b>WebRTC</b><span>双人语音</span></div>
+    </div>
+
+    <section id="lab" class="wrap section" aria-labelledby="lab-title">
+      <div class="section-title"><div><p class="eyebrow">PLAYBACK LAB</p><h2 id="lab-title">播放校准实验台</h2></div><p>选择播放器状态，拖动成员进度，观察一次校准会发出什么指令。</p></div>
+      <div class="bench" id="bench">
+        <div class="bench-heading"><span><i aria-hidden="true"></i> 一起看 / 本地演示</span><span class="mono">TIMELINE</span></div>
+        <fieldset class="modes" disabled><legend>房间场景</legend>
+          <label><input type="radio" name="mode" value="hold" checked><span>领先等待中暂停</span></label>
+          <label><input type="radio" name="mode" value="playing"><span>正常播放</span></label>
+          <label><input type="radio" name="mode" value="paused"><span>房主暂停</span></label>
+          <label><input type="radio" name="mode" value="buffering"><span>成员缓冲</span></label>
+        </fieldset>
+        <div class="desk">
+          <div class="timeline">
+            <div class="track" id="host-row"><div class="track-label"><span><i></i> 房间目标</span><b id="target-time">00:42.0</b></div><div class="ruler"><span class="pin"></span></div></div>
+            <div class="track" id="member-row"><div class="track-label"><span><i></i> 成员位置</span><b id="member-time">00:44.6</b></div><div class="ruler"><span class="pin" id="member-pin"></span></div></div>
+            <div class="controls"><label for="offset">成员相对房间的进度</label><output id="offset-value" for="offset">领先 2.6 秒</output><input id="offset" disabled type="range" min="-30" max="30" step="1" value="26"><div class="ends"><span>落后 3 秒</span><span>领先 3 秒</span></div></div>
+          </div>
+          <div class="readout">
+            <span class="readout-label">预计动作</span><h3 id="decision">对准暂停点</h3>
+            <p id="explain">成员原先因领先而等待。房主现在暂停，成员应退出等待，回到房主停下的位置。</p>
+            <button id="apply" type="button" disabled>执行本轮校准 <span aria-hidden="true">→</span></button><p id="outcome" class="outcome" role="status"></p>
+          </div>
+        </div>
+      </div>
+      <noscript><p>互动控件需要 JavaScript。上图的初始场景中，房间目标为 42 秒，成员领先 2.6 秒。执行时成员会回到房主的暂停点。</p></noscript>
+      <p class="note">浏览器演算使用合成时间轴。「领先等待中暂停」模拟宽松模式下成员已在等待、房主刚按暂停。其余场景采用普通模式，成员起初正在播放。各场景均假设已有有效时钟样本、没有等待 seek 落地；缓冲场景只演示刚开始缓冲的一轮。</p>
+    </section>
+
+    <section class="wrap section mechanics" aria-labelledby="how-title">
+      <div class="section-title"><div><p class="eyebrow">INSIDE THE ROOM</p><h2 id="how-title">一次暂停，如何抵达对方？</h2></div></div>
+      <ol class="steps">
+        <li><div class="symbol" aria-hidden="true">Ⅱ</div><h3>房主表达意图</h3><p>播放、暂停和拖动会改变房间的目标状态。位置、倍速和更新时间一同进入快照。</p></li>
+        <li><div class="symbol signal" aria-hidden="true">⇄</div><h3>房间传递快照</h3><p>Go 服务向房间成员广播状态。每个人在自己的设备上播放视频，语音通过 WebRTC 传输。</p></li>
+        <li><div class="symbol" aria-hidden="true">⌖</div><h3>成员选择动作</h3><p>客户端按时间与倍速推算目标位置。暂停时对准房主停下的位置，缓冲时暂缓重复跳转。</p></li>
+      </ol>
+    </section>
+
+    <section id="evidence" class="wrap section" aria-labelledby="evidence-title">
+      <div class="section-title"><div><p class="eyebrow">REPLAY RESULTS</p><h2 id="evidence-title">同一组输入，重放两次。</h2></div><p>两版分别运行相同夹具。下表统计满足预期的用例数，分母为该组用例总数。</p></div>
+      <div class="results">
+        <article><h3>成员播放器命令</h3><div class="numbers" aria-label="基线 7 项通过，共 15 项，重构后 15 项全部通过"><span>7/15</span><i aria-hidden="true">→</i><b>15/15</b></div><p>房主暂停后，正在领先等待的成员重新对准暂停点。旧播放器完成的异步操作也有了会话边界。</p><p class="evidence-links"><a href="evals/artifacts/member/before.jsonl">基线轨迹 ↗</a><a href="evals/artifacts/member/after.jsonl">重构轨迹 ↗</a></p></article>
+        <article><h3>房间消息契约</h3><div class="numbers" aria-label="基线 8 项通过，共 14 项，重构后 14 项全部通过"><span>8/14</span><i aria-hidden="true">→</i><b>14/14</b></div><p>Go 与 Dart 对缺省字段采用相同解释，同时保留显式传入的值。通过本机回环 WebSocket 核对广播结果。</p><p class="evidence-links"><a href="evals/artifacts/go-room/summary.json">逐项结果 ↗</a></p></article>
+      </div>
+      <a class="text-link" href="evals/refactor-1126-report.md">阅读实验条件与完整报告 ↗</a>
+    </section>
+
+    <section id="film" class="film" aria-labelledby="film-title">
+      <div class="wrap film-grid">
+        <div><p class="eyebrow">PROJECT FILM</p><h2 id="film-title">一起看<br>项目短片</h2><p>从两个人的进度条，看房间如何传递播放状态。</p><a class="text-link" href="media/promo.mp4" download="PiliSync.mp4">下载影片 ↓</a></div>
+        <video controls playsinline preload="none" poster="media/promo-poster.jpg" aria-label="PiliSync 中文项目短片"><source src="media/promo.mp4" type="video/mp4">当前浏览器无法播放此影片。<a href="media/promo.mp4">下载 MP4</a></video>
+      </div>
+    </section>
+  </main>
+  <footer class="wrap foot"><div><b>PiliSync</b><span>基于 PiliNara / PiliPlus · GPL-3.0</span></div><a href="https://github.com/RayMorTwinkle/PiliSync">源码与构建说明 ↗</a></footer>
+</body>
+</html>

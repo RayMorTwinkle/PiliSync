@@ -1,0 +1,10 @@
+{
+  "before": "314adb86a46f49ec0340ed2f3d9da62af28dbd67",
+  "after": "c4cc82be93f431379a64d72304ae393dc7dcec12",
+  "removed": [],
+  "changed_existing": [
+    "README.md",
+    "lib/services/watch_together/wt_member_coordinator.dart"
+  ],
+  "unexpected_existing": []
+}
