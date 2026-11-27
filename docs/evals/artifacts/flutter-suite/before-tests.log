@@ -1,0 +1,193 @@
+$ <sdk>/bin/flutter --no-version-check test --no-pub --concurrency=1 --reporter=expanded
+00:00 +0: loading <checkout>/test/danmaku_mask_geometry_test.dart
+00:00 +0: <checkout>/test/danmaku_mask_geometry_test.dart: fittedBoxTransform 与 RenderFittedBox 对拍 BoxFit.fill / Alignment.center
+00:00 +1: <checkout>/test/danmaku_mask_geometry_test.dart: fittedBoxTransform 与 RenderFittedBox 对拍 BoxFit.fill / Alignment.topLeft
+00:00 +2: <checkout>/test/danmaku_mask_geometry_test.dart: fittedBoxTransform 与 RenderFittedBox 对拍 BoxFit.fill / Alignment.bottomRight
+00:00 +3: <checkout>/test/danmaku_mask_geometry_test.dart: fittedBoxTransform 与 RenderFittedBox 对拍 BoxFit.fill / Alignment(0.3, -0.7)
+00:00 +4: <checkout>/test/danmaku_mask_geometry_test.dart: fittedBoxTransform 与 RenderFittedBox 对拍 BoxFit.contain / Alignment.center
+00:00 +5: <checkout>/test/danmaku_mask_geometry_test.dart: fittedBoxTransform 与 RenderFittedBox 对拍 BoxFit.contain / Alignment.topLeft
+00:00 +6: <checkout>/test/danmaku_mask_geometry_test.dart: fittedBoxTransform 与 RenderFittedBox 对拍 BoxFit.contain / Alignment.bottomRight
+00:00 +7: <checkout>/test/danmaku_mask_geometry_test.dart: fittedBoxTransform 与 RenderFittedBox 对拍 BoxFit.contain / Alignment(0.3, -0.7)
+00:00 +8: <checkout>/test/danmaku_mask_geometry_test.dart: fittedBoxTransform 与 RenderFittedBox 对拍 BoxFit.cover / Alignment.center
+00:00 +9: <checkout>/test/danmaku_mask_geometry_test.dart: fittedBoxTransform 与 RenderFittedBox 对拍 BoxFit.cover / Alignment.topLeft
+00:00 +10: <checkout>/test/danmaku_mask_geometry_test.dart: fittedBoxTransform 与 RenderFittedBox 对拍 BoxFit.cover / Alignment.bottomRight
+00:00 +11: <checkout>/test/danmaku_mask_geometry_test.dart: fittedBoxTransform 与 RenderFittedBox 对拍 BoxFit.cover / Alignment(0.3, -0.7)
+00:00 +12: <checkout>/test/danmaku_mask_geometry_test.dart: fittedBoxTransform 与 RenderFittedBox 对拍 BoxFit.fitWidth / Alignment.center
+00:00 +13: <checkout>/test/danmaku_mask_geometry_test.dart: fittedBoxTransform 与 RenderFittedBox 对拍 BoxFit.fitWidth / Alignment.topLeft
+00:00 +14: <checkout>/test/danmaku_mask_geometry_test.dart: fittedBoxTransform 与 RenderFittedBox 对拍 BoxFit.fitWidth / Alignment.bottomRight
+00:00 +15: <checkout>/test/danmaku_mask_geometry_test.dart: fittedBoxTransform 与 RenderFittedBox 对拍 BoxFit.fitWidth / Alignment(0.3, -0.7)
+00:00 +16: <checkout>/test/danmaku_mask_geometry_test.dart: fittedBoxTransform 与 RenderFittedBox 对拍 BoxFit.fitHeight / Alignment.center
+00:00 +17: <checkout>/test/danmaku_mask_geometry_test.dart: fittedBoxTransform 与 RenderFittedBox 对拍 BoxFit.fitHeight / Alignment.topLeft
+00:00 +18: <checkout>/test/danmaku_mask_geometry_test.dart: fittedBoxTransform 与 RenderFittedBox 对拍 BoxFit.fitHeight / Alignment.bottomRight
+00:00 +19: <checkout>/test/danmaku_mask_geometry_test.dart: fittedBoxTransform 与 RenderFittedBox 对拍 BoxFit.fitHeight / Alignment(0.3, -0.7)
+00:00 +20: <checkout>/test/danmaku_mask_geometry_test.dart: fittedBoxTransform 与 RenderFittedBox 对拍 BoxFit.none / Alignment.center
+00:00 +21: <checkout>/test/danmaku_mask_geometry_test.dart: fittedBoxTransform 与 RenderFittedBox 对拍 BoxFit.none / Alignment.topLeft
+00:00 +22: <checkout>/test/danmaku_mask_geometry_test.dart: fittedBoxTransform 与 RenderFittedBox 对拍 BoxFit.none / Alignment.bottomRight
+00:00 +23: <checkout>/test/danmaku_mask_geometry_test.dart: fittedBoxTransform 与 RenderFittedBox 对拍 BoxFit.none / Alignment(0.3, -0.7)
+00:00 +24: <checkout>/test/danmaku_mask_geometry_test.dart: fittedBoxTransform 与 RenderFittedBox 对拍 BoxFit.scaleDown / Alignment.center
+00:00 +25: <checkout>/test/danmaku_mask_geometry_test.dart: fittedBoxTransform 与 RenderFittedBox 对拍 BoxFit.scaleDown / Alignment.topLeft
+00:00 +26: <checkout>/test/danmaku_mask_geometry_test.dart: fittedBoxTransform 与 RenderFittedBox 对拍 BoxFit.scaleDown / Alignment.bottomRight
+00:00 +27: <checkout>/test/danmaku_mask_geometry_test.dart: fittedBoxTransform 与 RenderFittedBox 对拍 BoxFit.scaleDown / Alignment(0.3, -0.7)
+00:00 +28: <checkout>/test/danmaku_mask_geometry_test.dart: maskInLayer contain 恒等：仅剩弹幕层的 4px 下沿偏移
+00:00 +29: <checkout>/test/danmaku_mask_geometry_test.dart: maskInLayer letterbox：黑边不裁、画面内容整体下移「居中量 − 4」
+00:00 +30: <checkout>/test/danmaku_mask_geometry_test.dart: maskInLayer flipX：遮挡区随画面一起镜像
+00:00 +31: <checkout>/test/danmaku_mask_geometry_test.dart: maskInLayer 2 倍缩放：遮挡区坐标翻倍
+00:00 +32: <checkout>/test/danmaku_mask_geometry_test.dart: maskInLayer 退化输入返回 null（fail open）
+00:00 +33: <checkout>/test/danmaku_mask_geometry_test.dart: DanmakuMaskClipDriver 同帧同输入不重复推送，矩阵变化才推送
+00:00 +34: <checkout>/test/danmaku_mask_geometry_test.dart: DanmakuMaskClipDriver readInputs 返回 null（PiP / 视频未就绪）时不裁剪
+00:00 +35: loading <checkout>/test/watch_together/wt_signaling_e2e_test.dart
+00:01 +35: <checkout>/test/watch_together/wt_signaling_e2e_test.dart: (setUpAll)
+00:01 +35: <checkout>/test/watch_together/wt_signaling_e2e_test.dart: end-to-end: host creates room, member joins, navigate flows
+00:01 +36: <checkout>/test/watch_together/wt_signaling_e2e_test.dart: (tearDownAll)
+00:01 +36: loading <checkout>/test/watch_together/wt_member_coordinator_test.dart
+00:02 +36: <checkout>/test/watch_together/wt_member_coordinator_test.dart: seek completes while paused, then host resumes and member advances
+00:02 +37: <checkout>/test/watch_together/wt_member_coordinator_test.dart: buffering seek exemption is capped — wedged player still realigns
+00:02 +38: <checkout>/test/watch_together/wt_member_coordinator_test.dart: allowPlay=false suppresses auto-play, never auto-pause
+00:02 +39: <checkout>/test/watch_together/wt_member_coordinator_test.dart: loose mode tolerates a 3s drift but still seeks past 5s
+00:02 +40: <checkout>/test/watch_together/wt_member_coordinator_test.dart: loose far-behind member stops holding the barrier and chases
+00:02 +41: <checkout>/test/watch_together/wt_member_coordinator_test.dart: strict mode: buffering member still holds the barrier
+00:02 +42: <checkout>/test/watch_together/wt_member_coordinator_test.dart: paused member never reports loading (host deadlock guard)
+00:02 +43: <checkout>/test/watch_together/wt_member_coordinator_test.dart: loose mode: member >5s ahead pauses instead of seeking back
+00:02 +44: <checkout>/test/watch_together/wt_member_coordinator_test.dart: strict mode still seeks a far-ahead member back
+00:02 +45: loading <checkout>/test/watch_together/telemetry_test.dart
+00:03 +45: <checkout>/test/watch_together/telemetry_test.dart: (setUpAll)
+00:03 +45: <checkout>/test/watch_together/telemetry_test.dart: init generates a stable device id and counts opens
+00:03 +46: <checkout>/test/watch_together/telemetry_test.dart: wt session counters accumulate and dedupe
+00:05 +47: <checkout>/test/watch_together/telemetry_test.dart: (tearDownAll)
+00:05 +47: loading <checkout>/test/watch_together/wt_raw_ws_probe_test.dart
+00:05 +47: <checkout>/test/watch_together/wt_raw_ws_probe_test.dart: raw dart:io websocket reaches server
+RAW_WS recv: {"server":1795744121.554,"t":1,"type":"tsync_ack"}
+00:05 +48: loading <checkout>/test/watch_together/wt_loading_regression_test.dart
+00:06 +48: <checkout>/test/watch_together/wt_loading_regression_test.dart: ready member waits while a late loading member can start playback
+00:06 +49: loading <checkout>/test/watch_together/wt_logic_test.dart
+00:07 +49: <checkout>/test/watch_together/wt_logic_test.dart: WtTimeSync adopts offset from min-RTT sample only
+00:07 +50: <checkout>/test/watch_together/wt_logic_test.dart: WtTimeSync now() applies offset to local clock
+00:07 +51: <checkout>/test/watch_together/wt_logic_test.dart: WtTimeSync negative trip ignored
+00:07 +52: <checkout>/test/watch_together/wt_logic_test.dart: WtPlaybackLogic.extrapolateCurrent paused returns currentTime as-is
+00:07 +53: <checkout>/test/watch_together/wt_logic_test.dart: WtPlaybackLogic.extrapolateCurrent playing extrapolates by rate
+00:07 +54: <checkout>/test/watch_together/wt_logic_test.dart: WtPlaybackLogic.calibrate playing small drift -> no action
+00:07 +55: <checkout>/test/watch_together/wt_logic_test.dart: WtPlaybackLogic.calibrate playing large drift -> seek
+00:07 +56: <checkout>/test/watch_together/wt_logic_test.dart: WtPlaybackLogic.calibrate paused small drift -> seek
+00:07 +57: <checkout>/test/watch_together/wt_logic_test.dart: WtPlaybackLogic.calibrate paused state mismatch -> play/pause
+00:07 +58: <checkout>/test/watch_together/wt_logic_test.dart: WtPlaybackLogic.calibrate rate mismatch -> rate
+00:07 +59: <checkout>/test/watch_together/wt_logic_test.dart: WtPlaybackLogic.calibrate waitForLoadding forces member pause
+00:07 +60: <checkout>/test/watch_together/wt_logic_test.dart: WtPlaybackLogic.calibrate settling suppresses repeated seek
+00:07 +61: <checkout>/test/watch_together/wt_logic_test.dart: WtPlaybackLogic.calibrate suppressSeek=false overrides the loading exemption (F12-i cap)
+00:07 +62: <checkout>/test/watch_together/wt_logic_test.dart: WtPlaybackLogic.calibrate allowPlay=false suppresses only the auto-play edge (F12-m)
+00:07 +63: <checkout>/test/watch_together/wt_logic_test.dart: models WtPlaybackState json roundtrip
+00:07 +64: <checkout>/test/watch_together/wt_logic_test.dart: models WtRoomSnapshot flattens playback fields
+00:07 +65: loading <checkout>/test/watch_together/wt_call_manager_test.dart
+00:08 +65: <checkout>/test/watch_together/wt_call_manager_test.dart: reset sends bye to the bound peer and clears call state
+00:08 +66: <checkout>/test/watch_together/wt_call_manager_test.dart: idle reset sends no bye
+00:08 +67: <checkout>/test/watch_together/wt_call_manager_test.dart: signals from a different sender are dropped once bound
+00:08 +68: <checkout>/test/watch_together/wt_call_manager_test.dart: unbound non-offer signals are ignored while idle
+00:08 +69: <checkout>/test/watch_together/wt_call_manager_test.dart: onPeerLeft only tears down when it is our peer
+00:08 +70: <checkout>/test/watch_together/wt_call_manager_test.dart: socket disconnect fails the call and releases resources
+00:08 +71: <checkout>/test/watch_together/wt_call_manager_test.dart: start on a dead socket fails immediately instead of wedging (F12-f)
+00:08 +72: <checkout>/test/watch_together/wt_call_manager_test.dart: unbound calling alias resets when the sole peer leaves (F12-f)
+00:08 +73: <checkout>/test/watch_together/wt_call_manager_test.dart: voice gate threshold 0 keeps the gate always open
+00:08 +74: <checkout>/test/watch_together/wt_call_manager_test.dart: voice gate gate closes below threshold and reopens above it
+00:08 +75: <checkout>/test/watch_together/wt_call_manager_test.dart: voice gate lowering the threshold to 0 while closed reopens the gate
+00:08 +76: loading <checkout>/test/watch_together/wt_time_sync_test.dart
+00:08 +76: <checkout>/test/watch_together/wt_time_sync_test.dart: WtTimeSync deterministic offline adopts offset 5 from start100/end102/server106
+00:08 +77: <checkout>/test/watch_together/wt_time_sync_test.dart: WtTimeSync deterministic offline slow sample does not replace min-RTT sample
+00:08 +78: <checkout>/test/watch_together/wt_time_sync_test.dart: WtTimeSync deterministic offline faster sample replaces offset and minTrip
+00:08 +79: <checkout>/test/watch_together/wt_time_sync_test.dart: WtTimeSync deterministic offline negative trip does not pollute existing samples
+00:08 +80: <checkout>/test/watch_together/wt_time_sync_test.dart: WtTimeSync deterministic offline after reset a slow sample is accepted again
+00:08 +81: loading <checkout>/test/watch_together/wt_mirror_e2e_test.dart
+00:09 +81: <checkout>/test/watch_together/wt_mirror_e2e_test.dart: standalone mirror receives playback and sends loading true then false
+MIRROR {"ts":"2026-11-27T01:48:47.163394Z","event":"received","type":"WtJoinedEvent"}
+MIRROR {"ts":"2026-11-27T01:48:47.165122Z","event":"joined","room":"mirror-test-1795744125957128","role":"member"}
+MIRROR {"ts":"2026-11-27T01:48:47.166453Z","event":"calibrate","message":"CALIBRATE WtSyncAction(seekTo: null, play: true, rate: null)local=0.0 room=10.0(playing)"}
+MIRROR {"ts":"2026-11-27T01:48:47.166667Z","event":"command","command":"play","positionSec":0.0}
+MIRROR {"ts":"2026-11-27T01:48:47.167177Z","event":"state","elapsed":0.0,"sentLoading":true,"positionSec":0.0,"playing":true,"roomPaused":false,"roomTime":10.0,"waitForLoading":false,"offset":-2.384185791015625e-7,"rtt":0.009999990463256836}
+MIRROR {"ts":"2026-11-27T01:48:47.168020Z","event":"received","type":"WtMemberUpdateEvent"}
+MIRROR {"ts":"2026-11-27T01:48:47.171804Z","event":"received","type":"WtRoomUpdateEvent"}
+MIRROR {"ts":"2026-11-27T01:48:47.371177Z","event":"received","type":"WtRoomUpdateEvent"}
+MIRROR {"ts":"2026-11-27T01:48:47.571681Z","event":"received","type":"WtRoomUpdateEvent"}
+MIRROR {"ts":"2026-11-27T01:48:47.771538Z","event":"received","type":"WtRoomUpdateEvent"}
+MIRROR {"ts":"2026-11-27T01:48:47.972134Z","event":"received","type":"WtRoomUpdateEvent"}
+MIRROR {"ts":"2026-11-27T01:48:48.171548Z","event":"received","type":"WtRoomUpdateEvent"}
+MIRROR {"ts":"2026-11-27T01:48:48.193687Z","event":"calibrate","message":"CALIBRATE WtSyncAction(seekTo: 10.024500131607056, play: null, rate: null)local=0.028000000000000025 room=10.0(playing)"}
+MIRROR {"ts":"2026-11-27T01:48:48.194097Z","event":"command","command":"seek","positionSec":10.024500131607056}
+MIRROR {"ts":"2026-11-27T01:48:48.195003Z","event":"state","elapsed":1.028,"sentLoading":false,"positionSec":10.024500131607056,"playing":true,"roomPaused":false,"roomTime":10.0,"waitForLoading":false,"offset":0.0004999637603759766,"rtt":0.0009999275207519531}
+MIRROR {"ts":"2026-11-27T01:48:48.195752Z","event":"received","type":"WtMemberUpdateEvent"}
+MIRROR {"ts":"2026-11-27T01:48:48.372013Z","event":"received","type":"WtRoomUpdateEvent"}
+MIRROR {"ts":"2026-11-27T01:48:48.571554Z","event":"received","type":"WtRoomUpdateEvent"}
+MIRROR {"ts":"2026-11-27T01:48:48.770286Z","event":"received","type":"WtRoomUpdateEvent"}
+MIRROR {"ts":"2026-11-27T01:48:48.971967Z","event":"received","type":"WtRoomUpdateEvent"}
+MIRROR {"ts":"2026-11-27T01:48:49.171799Z","event":"received","type":"WtRoomUpdateEvent"}
+MIRROR {"ts":"2026-11-27T01:48:49.226454Z","event":"state","elapsed":2.06,"sentLoading":false,"positionSec":11.056500131607056,"playing":true,"roomPaused":false,"roomTime":10.0,"waitForLoading":false,"offset":0.0004999637603759766,"rtt":0.0009999275207519531}
+MIRROR {"ts":"2026-11-27T01:48:49.227425Z","event":"received","type":"WtMemberUpdateEvent"}
+MIRROR {"ts":"2026-11-27T01:48:49.371464Z","event":"received","type":"WtRoomUpdateEvent"}
+MIRROR {"ts":"2026-11-27T01:48:49.571661Z","event":"received","type":"WtRoomUpdateEvent"}
+MIRROR {"ts":"2026-11-27T01:48:49.771721Z","event":"received","type":"WtRoomUpdateEvent"}
+MIRROR {"ts":"2026-11-27T01:48:49.971437Z","event":"received","type":"WtRoomUpdateEvent"}
+MIRROR {"ts":"2026-11-27T01:48:50.171551Z","event":"received","type":"WtRoomUpdateEvent"}
+MIRROR {"ts":"2026-11-27T01:48:50.259421Z","event":"calibrate","message":"CALIBRATE WtSyncAction(seekTo: 10.090500116348267, play: null, rate: null)local=12.090500131607056 room=10.0(playing)"}
+MIRROR {"ts":"2026-11-27T01:48:50.259698Z","event":"command","command":"seek","positionSec":10.090500116348267}
+MIRROR {"ts":"2026-11-27T01:48:50.260215Z","event":"state","elapsed":3.094,"sentLoading":false,"positionSec":10.090500116348267,"playing":true,"roomPaused":false,"roomTime":10.0,"waitForLoading":false,"offset":0.0004999637603759766,"rtt":0.0009999275207519531}
+MIRROR {"ts":"2026-11-27T01:48:50.261140Z","event":"received","type":"WtMemberUpdateEvent"}
+MIRROR {"ts":"2026-11-27T01:48:50.371739Z","event":"received","type":"WtRoomUpdateEvent"}
+MIRROR {"ts":"2026-11-27T01:48:50.571581Z","event":"received","type":"WtRoomUpdateEvent"}
+MIRROR {"ts":"2026-11-27T01:48:50.772578Z","event":"received","type":"WtRoomUpdateEvent"}
+MIRROR {"ts":"2026-11-27T01:48:50.972405Z","event":"received","type":"WtRoomUpdateEvent"}
+MIRROR {"ts":"2026-11-27T01:48:51.171619Z","event":"received","type":"WtRoomUpdateEvent"}
+MIRROR {"ts":"2026-11-27T01:48:51.189431Z","event":"done","roomUpdates":21,"scope":"protocol mirror; host pause/resume requires independent evidence"}
+00:15 +82: loading <checkout>/test/watch_together/wt_service_regression_test.dart
+00:16 +82: <checkout>/test/watch_together/wt_service_regression_test.dart: authoritative ack releases barrier after loading member leaves
+WT_DBG EVT WtMemberUpdateEvent
+WT_DBG EVT WtUpdateAckEvent
+WT_DBG EVT WtUpdateAckEvent
+00:16 +83: <checkout>/test/watch_together/wt_service_regression_test.dart: barrier release snapshot respects explicit host pause
+WT_DBG EVT WtMemberUpdateEvent
+WT_DBG EVT WtUpdateAckEvent
+00:16 +84: <checkout>/test/watch_together/wt_service_regression_test.dart: stuck member player releases room barrier after loading cap
+WT_DBG CALIBRATE WtSyncAction(seekTo: 35.0, play: null, rate: null)local=0.0 room=10.0(playing)
+WT_DBG CALIBRATE WtSyncAction(seekTo: 10.0, play: false, rate: null)local=35.0 room=10.0(playing)
+WT_DBG CALIBRATE WtSyncAction(seekTo: null, play: true, rate: null)local=10.0 room=10.0(playing)
+00:16 +85: <checkout>/test/watch_together/wt_service_regression_test.dart: service resumes member after paused seek and does not freeze at target
+WT_DBG CALIBRATE WtSyncAction(seekTo: 10.0, play: null, rate: null)local=0.0 room=10.0(paused)
+WT_DBG CALIBRATE WtSyncAction(seekTo: null, play: true, rate: null)local=10.0 room=10.0(playing)
+WT_DBG CALIBRATE WtSyncAction(seekTo: 10.0, play: false, rate: null)local=10.75 room=10.0(paused)
+00:16 +86: <checkout>/test/watch_together/wt_service_regression_test.dart: sync-seek silence suppresses the buffering flush report (F12-b)
+WT_DBG CALIBRATE WtSyncAction(seekTo: 10.0, play: null, rate: null)local=0.0 room=10.0(playing)
+00:16 +87: <checkout>/test/watch_together/wt_service_regression_test.dart: terminal errors leave the room instead of retry-looping (F12-c)
+WT_DBG EVT WtErrorEvent
+WT_DBG EVT WtErrorEvent
+WT_DBG EVT WtErrorEvent
+WT_DBG EVT WtErrorEvent
+WT_DBG EVT WtErrorEvent
+00:16 +88: <checkout>/test/watch_together/wt_service_regression_test.dart: member calibration freezes until a fresh snapshot lands (F12-d)
+WT_DBG MTICK skip: offline/fresh (WtConnectionState.connected)
+WT_DBG EVT WtJoinedEvent
+WT_DBG CALIBRATE WtSyncAction(seekTo: 52.0, play: null, rate: null)local=0.0 room=50.0(playing)
+00:16 +89: <checkout>/test/watch_together/wt_service_regression_test.dart: member external pause earns auto-play cooldown (F12-m)
+WT_DBG CALIBRATE WtSyncAction(seekTo: null, play: true, rate: null)local=10.0 room=10.0(playing)
+00:16 +90: <checkout>/test/watch_together/wt_service_regression_test.dart: host buffering dwell starts at the rising edge (F12-a)
+00:17 +91: <checkout>/test/watch_together/wt_service_regression_test.dart: member requestHostTransfer and host transferHostTo send frames
+00:17 +92: <checkout>/test/watch_together/wt_service_regression_test.dart: host_changed snapshot promotes member and clears member residue
+WT_DBG EVT WtRoomUpdateEvent
+WT_DBG EVT WtRoomUpdateEvent
+00:17 +93: <checkout>/test/watch_together/wt_service_regression_test.dart: host-priority mode: member loading never pauses the host
+WT_DBG EVT WtMemberUpdateEvent
+WT_DBG EVT WtMemberUpdateEvent
+00:17 +94: <checkout>/test/watch_together/wt_service_regression_test.dart: member re-follows room target when navigate broadcast was missed
+WT_DBG EVT WtJoinedEvent
+WT_DBG NAV drift: refollow room target
+00:17 +95: <checkout>/test/watch_together/wt_service_regression_test.dart: targetless room snapshot clears member stale target
+WT_DBG EVT WtJoinedEvent
+00:17 +96: <checkout>/test/watch_together/wt_service_regression_test.dart: inbound watchdog recovers a half-open socket
+00:17 +97: loading <checkout>/test/watch_together/wt_host_intent_test.dart
+00:18 +97: <checkout>/test/watch_together/wt_host_intent_test.dart: (setUpAll)
+00:18 +97: <checkout>/test/watch_together/wt_host_intent_test.dart: adapter ignores sync pause but observes an already-paused request
+00:18 +98: <checkout>/test/watch_together/wt_host_intent_test.dart: pauseIfExists reports pause even when the barrier already paused
+00:18 +99: <checkout>/test/watch_together/wt_host_intent_test.dart: stale playing status cannot rearm a cancelled barrier
+00:18 +100: <checkout>/test/watch_together/wt_host_intent_test.dart: explicit pause during the barrier cancels automatic resume
+00:18 +101: <checkout>/test/watch_together/wt_host_intent_test.dart: resume consumes intent before a later physical pause is reported
+00:18 +102: <checkout>/test/watch_together/wt_host_intent_test.dart: host buffering reports paused unless a barrier retains play intent
+00:18 +103: <checkout>/test/watch_together/wt_host_intent_test.dart: buffering barrier pauses physically without publishing user pause
+00:18 +104: <checkout>/test/watch_together/wt_host_intent_test.dart: (tearDownAll)
+00:18 +104: All tests passed!
+
+exit=0

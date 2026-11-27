@@ -40,6 +40,14 @@
 
 夹具先送入不同的完整快照，随后再发送稀疏快照，同时检查旧目标和旧时长有没有意外残留。常规 Dart 发送端会显式写出播放字段；这些测试覆盖兼容边界，未统计线上出现频率。两版本原有 Go 套件均以退出码 0 结束。[原始基线回包断言](artifacts/go-room/before-contracts.log) · [候选契约日志](artifacts/go-room/after-contracts.log) · [原套件基线](artifacts/go-room/before-existing.log) · [原套件候选](artifacts/go-room/after-existing.log)
 
+## 完整 Flutter 套件
+
+完整 `flutter test` 在两个独立检出目录中执行。基线通过 **104/104**，候选通过 **105/105**，两次最终运行均为零失败、零跳过。候选多出的测试是此次新增的成员轨迹回归入口，其内部复用上面的 15 条夹具。完整套件的分母因此相差一项，不能与固定题目的通过数混用。[最终汇总](artifacts/flutter-suite/summary.json) · [基线输出](artifacts/flutter-suite/before-tests.log) · [候选输出](artifacts/flutter-suite/after-tests.log)
+
+原 `pubspec.lock` 缺少清单已声明的 `gt3_flutter_plugin 0.1.0`，两个版本运行 `flutter pub get --offline --enforce-lockfile` 都退出 65。两个临时检出随后应用相同的测试锁补丁，只补这一项。其余包的版本和 Git 提交均保留，校正锁在两侧都通过严格解析。哈希、SDK 的 macOS 常规补丁及 material_ui 缓存补丁均已归档；仓库的清单、锁和认证模块保持基线内容。[原锁解析输出](artifacts/flutter-suite/before-original-lock.log) · [测试锁差异](artifacts/flutter-suite/test-lock.patch) · [SDK 准备记录](artifacts/flutter-suite/sdk-setup.log)
+
+每个版本使用自身的 Go 房间处理器临时监听 `127.0.0.1:9901`，因此依赖监听器的测试也有实际运行。首次两端各有一个镜像测试超时，日志中测试计时从秒级跳到分钟级。按相同命令、配置和输入复跑后通过。超时的首次结果随最终结果一同提供；本报告不据此估计耗时或稳定性。[首次汇总](artifacts/flutter-suite/first-attempt.json) · [基线首次日志](artifacts/flutter-suite/before-clock-jump.log) · [候选首次日志](artifacts/flutter-suite/after-clock-jump.log)
+
 ## 复现
 
 在含两端提交和本报告的仓库根目录执行。Python 仅用标准库。Go 离线复测需先备好 `go.sum` 锁定的模块缓存；首次可在 `signaling/` 下运行 `go mod download`。
@@ -51,6 +59,13 @@ python3 docs/evals/artifacts/member/run.py ../PiliSync-baseline
 python3 docs/evals/artifacts/member/run.py .
 python3 docs/evals/artifacts/go-room/replay.py --baseline 314adb86a46f49ec0340ed2f3d9da62af28dbd67 --candidate b3abd58d547a8ccf5378473c478c8f4b8f47a4f2 --out /tmp/pilisync-eval-go
 python3 docs/evals/artifacts/boundaries/compare.py
+```
+
+完整 Flutter 复测使用两个专用检出、Flutter 3.47.5 的独立 SDK 和准备好的 Pub 缓存。缓存需要包含锁定版本及测试锁中补齐的包，SDK 和 material_ui 需先按 macOS 配套脚本应用项目补丁。脚本在结束时恢复原锁，命令和两个检出的运行日志写到指定目录。[补丁脚本](artifacts/flutter-suite/patch_macos.py) · [全套复现脚本](artifacts/flutter-suite/run.py)
+
+```sh
+git worktree add --detach ../PiliSync-candidate d11e7657f60f543c1f02fe001d42a2014dbc0b79
+python3 docs/evals/artifacts/flutter-suite/run.py --baseline ../PiliSync-baseline --candidate ../PiliSync-candidate --sdk "$FLUTTER_ROOT" --pub-cache "$PUB_CACHE" --out /tmp/pilisync-flutter-suite
 ```
 
 ## 面试讨论

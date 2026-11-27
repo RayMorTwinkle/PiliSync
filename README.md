@@ -51,6 +51,8 @@ python3 docs/evals/artifacts/member/run.py .
 (cd signaling && go test -count=1 ./...)
 ```
 
+在相同的临时测试锁和回环房间服务下，完整 Flutter 套件基线通过 104 项，重构后通过 105 项，均为零跳过。仓库原锁缺少清单已声明的 `gt3_flutter_plugin 0.1.0`，严格离线安装会退出 65。报告保留了原锁错误、临时锁的唯一差异与首次运行超时的日志。[全套测试证据](docs/evals/artifacts/flutter-suite/summary.json) · [复测细节](docs/evals/refactor-1126-report.md#完整-flutter-套件)
+
 编译完整应用前，请按构建指南准备本项目锁定的 Flutter 3.47.5 和所需框架补丁。语音还依赖对应平台的原生 WebRTC 组件及麦克风权限。[版本锁](.fvmrc) · [构建指南](docs/build.md)
 
 ```sh

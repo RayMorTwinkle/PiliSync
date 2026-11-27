@@ -1,0 +1,27 @@
+{
+  "sdk": "3.47.5",
+  "before": {
+    "commit": "314adb86a46f49ec0340ed2f3d9da62af28dbd67",
+    "pubspec_lock_sha256": "b01fb455adb5e5cfcbf42396948cc3dabdf14d818bade9315ef6f259b154ccfb",
+    "original-lock_exit": 65,
+    "test_lock_sha256": "da412a402ebe98e935ca5f6ae3607f726676a66b0d4092a08be5bd4f77582e6b",
+    "dependencies_exit": 0,
+    "listener-build_exit": 0,
+    "tests_exit": 0,
+    "reported_pass": 104,
+    "reported_skip": 0,
+    "reported_fail": 0
+  },
+  "after": {
+    "commit": "d11e7657f60f543c1f02fe001d42a2014dbc0b79",
+    "pubspec_lock_sha256": "b01fb455adb5e5cfcbf42396948cc3dabdf14d818bade9315ef6f259b154ccfb",
+    "original-lock_exit": 65,
+    "test_lock_sha256": "da412a402ebe98e935ca5f6ae3607f726676a66b0d4092a08be5bd4f77582e6b",
+    "dependencies_exit": 0,
+    "listener-build_exit": 0,
+    "tests_exit": 0,
+    "reported_pass": 105,
+    "reported_skip": 0,
+    "reported_fail": 0
+  }
+}

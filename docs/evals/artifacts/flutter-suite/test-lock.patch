@@ -1,0 +1,19 @@
+diff --git a/pubspec.lock b/pubspec.lock
+index 8d6274069..217758e3c 100644
+--- a/pubspec.lock
++++ b/pubspec.lock
+@@ -886,6 +886,14 @@ packages:
+       url: "https://pub.dev"
+     source: hosted
+     version: "2.3.2"
++  gt3_flutter_plugin:
++    dependency: "direct main"
++    description:
++      name: gt3_flutter_plugin
++      sha256: "08f35692e937770ad6b3e2017eb8ef81839a82b8a63f5acf3abab14b688fc36c"
++      url: "https://pub.dev"
++    source: hosted
++    version: "0.1.0"
+   gtk:
+     dependency: transitive
+     description:
